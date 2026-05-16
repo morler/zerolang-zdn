@@ -241,15 +241,42 @@ for (const [command, expected] of [
 const skillsList = json(["skills", "list", "--json"]).body;
 assert.equal(skillsList.success, true);
 assert(skillsList.data.some((skill) => skill.name === "zero" && /Zero/.test(skill.description)));
+const skillNames = new Set(skillsList.data.map((skill) => skill.name));
+for (const name of [
+  "zero",
+  "zero-agent",
+  "zero-builds",
+  "zero-diagnostics",
+  "zero-language",
+  "zero-packages",
+  "zero-stdlib",
+  "zero-testing",
+]) {
+  assert(skillNames.has(name), `missing bundled skill ${name}`);
+}
 
 const zeroSkill = json(["skills", "get", "zero", "--full", "--json"]).body;
 assert.equal(zeroSkill.success, true);
-assert.match(zeroSkill.data[0].content, /# Zero Skill/);
-assert(zeroSkill.data[0].files.some((file) => file.path === "references/commands.md"));
+assert.match(zeroSkill.data[0].content, /# Zero/);
+assert.match(zeroSkill.data[0].content, /zero skills get zero --full/);
+assert.equal(zeroSkill.data[0].files, undefined);
+
+const languageSkill = json(["skills", "get", "zero-language", "--json"]).body;
+assert.equal(languageSkill.success, true);
+assert.match(languageSkill.data[0].content, /# Zero Language/);
+assert.match(languageSkill.data[0].content, /pub fun main/);
+
+const diagnosticSkill = json(["skills", "get", "zero-diagnostics", "--json"]).body;
+assert.equal(diagnosticSkill.success, true);
+assert.match(diagnosticSkill.data[0].content, /fixSafety/);
 
 const skillsPath = json(["skills", "path", "zero", "--json"]).body;
 assert.equal(skillsPath.success, true);
 assert.match(skillsPath.data.path, /skills\/zero$/);
+
+const languagePath = json(["skills", "path", "zero-language", "--json"]).body;
+assert.equal(languagePath.success, true);
+assert.match(languagePath.data.path, /skill-data\/zero-language\.md$/);
 
 const missingSkill = zero(["skills", "get", "missing", "--json"], { allowFailure: true });
 assert.notEqual(missingSkill.code, 0);

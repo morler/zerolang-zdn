@@ -186,23 +186,32 @@ function discoverSkills(skillsDirs) {
       continue;
     }
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const dir = join(skillsDir, entry.name);
-      const skillMd = join(dir, "SKILL.md");
-      if (!existsSync(skillMd)) continue;
-      let content;
-      try {
-        content = readFileSync(skillMd, "utf8");
-      } catch {
-        continue;
+      if (entry.isDirectory()) {
+        const dir = join(skillsDir, entry.name);
+        const skillMd = join(dir, "SKILL.md");
+        if (!existsSync(skillMd)) continue;
+        addDiscoveredSkill(skills, skillMd, dir, dir);
+      } else if (entry.isFile() && entry.name.endsWith(".md") && entry.name !== "SKILL.md") {
+        const skillMd = join(skillsDir, entry.name);
+        const supplementaryDir = join(skillsDir, entry.name.replace(/\.md$/, ""));
+        addDiscoveredSkill(skills, skillMd, skillMd, supplementaryDir);
       }
-      const frontmatter = parseSkillFrontmatter(content);
-      if (!frontmatter) continue;
-      skills.push({ ...frontmatter, dir });
     }
   }
   skills.sort((a, b) => a.name.localeCompare(b.name));
   return skills;
+}
+
+function addDiscoveredSkill(skills, contentPath, path, supplementaryDir) {
+  let content;
+  try {
+    content = readFileSync(contentPath, "utf8");
+  } catch {
+    return;
+  }
+  const frontmatter = parseSkillFrontmatter(content);
+  if (!frontmatter) return;
+  skills.push({ ...frontmatter, contentPath, path, supplementaryDir });
 }
 
 function parseSkillFrontmatter(content) {
@@ -274,10 +283,10 @@ function runSkillsGet(skillsDirs, names, getAll, full, jsonMode) {
     const data = targets.map((skill) => {
       const item = {
         name: skill.name,
-        content: readTextIfExists(join(skill.dir, "SKILL.md")) ?? "",
+        content: readTextIfExists(skill.contentPath) ?? "",
       };
       if (full) {
-        const files = collectSupplementaryFiles(skill.dir);
+        const files = collectSupplementaryFiles(skill.supplementaryDir);
         if (files.length > 0) item.files = files;
       }
       return item;
@@ -288,10 +297,10 @@ function runSkillsGet(skillsDirs, names, getAll, full, jsonMode) {
 
   targets.forEach((skill, index) => {
     if (index > 0) console.log("\n---\n");
-    const content = readTextIfExists(join(skill.dir, "SKILL.md"));
+    const content = readTextIfExists(skill.contentPath);
     if (content) process.stdout.write(content.endsWith("\n") ? content : `${content}\n`);
     if (full) {
-      for (const file of collectSupplementaryFiles(skill.dir)) {
+      for (const file of collectSupplementaryFiles(skill.supplementaryDir)) {
         console.log(`\n--- ${file.path} ---\n`);
         process.stdout.write(file.content.endsWith("\n") ? file.content : `${file.content}\n`);
       }
@@ -312,9 +321,9 @@ function runSkillsPath(skillsDirs, name, jsonMode) {
   const skill = discoverSkills(skillsDirs).find((item) => item.name === name);
   if (!skill) skillsError(`Skill not found: ${name}`, jsonMode);
   if (jsonMode) {
-    console.log(JSON.stringify({ success: true, data: { name: skill.name, path: skill.dir } }));
+    console.log(JSON.stringify({ success: true, data: { name: skill.name, path: skill.path } }));
   } else {
-    console.log(skill.dir);
+    console.log(skill.path);
   }
 }
 

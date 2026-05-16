@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 
@@ -34,6 +34,27 @@ function runnableBuildArgs(input: string, out: string) {
 
 function runZero(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}) {
   return execFileAsync(zero, args, { cwd: options.cwd ?? root, env: options.env ?? process.env });
+}
+
+async function collectSkillMdFiles(dir: string): Promise<string[]> {
+  const ignoredDirs = new Set([".git", ".next", ".zero", "node_modules"]);
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      if (ignoredDirs.has(entry.name)) continue;
+      files.push(...await collectSkillMdFiles(join(dir, entry.name)));
+    } else if (entry.isFile() && entry.name === "SKILL.md") {
+      files.push(relative(root, join(dir, entry.name)).split(sep).join("/"));
+    }
+  }
+  return files.sort();
 }
 
 describe("native zero CLI", () => {
@@ -144,18 +165,46 @@ describe("native zero CLI", () => {
   });
 
   it("lists and retrieves bundled skills", async () => {
+    assert.deepEqual(await collectSkillMdFiles(root), ["skills/zero/SKILL.md"]);
+
     const list = JSON.parse((await runZero(["skills", "list", "--json"])).stdout);
     assert.equal(list.success, true);
-    assert.equal(list.data.some((skill: { name: string }) => skill.name === "zero"), true);
+    const skillNames = new Set(list.data.map((skill: { name: string }) => skill.name));
+    for (const name of [
+      "zero",
+      "zero-agent",
+      "zero-builds",
+      "zero-diagnostics",
+      "zero-language",
+      "zero-packages",
+      "zero-stdlib",
+      "zero-testing",
+    ]) {
+      assert.equal(skillNames.has(name), true);
+    }
 
     const zeroSkill = JSON.parse((await runZero(["skills", "get", "zero", "--full", "--json"])).stdout);
     assert.equal(zeroSkill.success, true);
-    assert.match(zeroSkill.data[0].content, /# Zero Skill/);
-    assert.equal(zeroSkill.data[0].files.some((file: { path: string }) => file.path === "references/commands.md"), true);
+    assert.match(zeroSkill.data[0].content, /# Zero/);
+    assert.match(zeroSkill.data[0].content, /zero skills get zero --full/);
+    assert.equal(zeroSkill.data[0].files, undefined);
+
+    const languageSkill = JSON.parse((await runZero(["skills", "get", "zero-language", "--json"])).stdout);
+    assert.equal(languageSkill.success, true);
+    assert.match(languageSkill.data[0].content, /# Zero Language/);
+    assert.match(languageSkill.data[0].content, /pub fun main/);
+
+    const diagnosticSkill = JSON.parse((await runZero(["skills", "get", "zero-diagnostics", "--json"])).stdout);
+    assert.equal(diagnosticSkill.success, true);
+    assert.match(diagnosticSkill.data[0].content, /fixSafety/);
 
     const zeroPath = JSON.parse((await runZero(["skills", "path", "zero", "--json"])).stdout);
     assert.equal(zeroPath.success, true);
     assert.match(zeroPath.data.path, /skills\/zero$/);
+
+    const languagePath = JSON.parse((await runZero(["skills", "path", "zero-language", "--json"])).stdout);
+    assert.equal(languagePath.success, true);
+    assert.match(languagePath.data.path, /skill-data\/zero-language\.md$/);
 
     const missing = await runZero(["skills", "get", "missing", "--json"]).catch((error) => error);
     assert.notEqual(missing.code, 0);
