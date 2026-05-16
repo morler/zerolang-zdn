@@ -14,7 +14,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #define ZERO_VERSION "0.1.0"
@@ -302,8 +301,7 @@ static bool command_available(const char *name) {
 }
 
 static bool command_succeeds(const char *command) {
-  int code = system(command);
-  return code != -1 && WIFEXITED(code) && WEXITSTATUS(code) == 0;
+  return system(command) == 0;
 }
 
 static char *command_first_line(const char *command) {
@@ -322,8 +320,24 @@ static bool path_exists(const char *path) {
   return stat(path, &st) == 0;
 }
 
+static int zero_mkdir(const char *path) {
+#if defined(_WIN32)
+  return mkdir(path);
+#else
+  return mkdir(path, 0777);
+#endif
+}
+
+static int zero_lstat(const char *path, struct stat *st) {
+#if defined(_WIN32)
+  return stat(path, st);
+#else
+  return lstat(path, st);
+#endif
+}
+
 static bool ensure_dir(const char *path, ZDiag *diag) {
-  if (mkdir(path, 0777) == 0 || errno == EEXIST) return true;
+  if (zero_mkdir(path) == 0 || errno == EEXIST) return true;
   diag->code = 2002;
   diag->path = path;
   diag->line = 1;
@@ -344,7 +358,7 @@ static char *join_cli_path(const char *left, const char *right) {
 
 static bool remove_tree(const char *path, ZBuf *deleted) {
   struct stat st;
-  if (lstat(path, &st) != 0) return errno == ENOENT;
+  if (zero_lstat(path, &st) != 0) return errno == ENOENT;
   if (S_ISDIR(st.st_mode)) {
     DIR *dir = opendir(path);
     if (!dir) return false;
@@ -1577,9 +1591,9 @@ static bool json_array_nonempty_literal(const char *json) {
 }
 
 static bool compiler_cache_touch(const char *kind, uint64_t key) {
-  mkdir(".zero", 0777);
-  mkdir(".zero/cache", 0777);
-  mkdir(".zero/cache/native", 0777);
+  zero_mkdir(".zero");
+  zero_mkdir(".zero/cache");
+  zero_mkdir(".zero/cache/native");
   char path[256];
   snprintf(path, sizeof(path), ".zero/cache/native/%s-%016llx.cache", kind, (unsigned long long)key);
   bool hit = path_exists(path);
@@ -5247,7 +5261,7 @@ static int doctor_command(bool json) {
   bool target_cc_override = zero_cc && zero_cc[0];
   bool bundled_target_cc_ok = command_available("zig");
   bool target_cc_ok = target_cc_override || bundled_target_cc_ok;
-  bool zero_dir_ok = mkdir(".zero", 0777) == 0 || errno == EEXIST;
+  bool zero_dir_ok = zero_mkdir(".zero") == 0 || errno == EEXIST;
   bool write_ok = false;
   if (zero_dir_ok) {
     ZDiag diag = {0};
