@@ -2560,4 +2560,26 @@ const sliceNonSliceable = await execFileAsync(zero, ["check", "conformance/nativ
 assert.notEqual(sliceNonSliceable.code, 0);
 assert.match(sliceNonSliceable.stderr, /TYP021/);
 
+for (const [fixture, code] of [
+  ["issue31-missing-return.0", /TYP003/],
+  ["issue31-check-non-fallible.0", /ERR001/],
+  ["issue31-unknown-member-compatible.0", /TYP021/],
+  ["issue31-function-name-value.0", /TYP001/],
+  ["issue31-call-non-function-local.0", /TYP001/],
+  ["issue31-shape-literal-unrelated-type.0", /TYP002/],
+  ["issue31-heterogeneous-unannotated-array.0", /TYP002/],
+  ["issue31-unknown-parameter-type.0", /NAM003/],
+  ["issue31-duplicate-shape-fields.0", /NAM004/],
+  ["issue31-duplicate-enum-cases.0", /NAM004/],
+  ["issue31-duplicate-shape-literal-fields.0", /NAM004/],
+  ["issue31-type-name-runtime-value.0", /TYP001/],
+  ["issue31-read-while-mutably-borrowed.0", /BOR001/],
+  ["issue31-local-reference-escapes-through-call.0", /BOR002/],
+  ["issue31-borrow-assignment-not-tracked.0", /BOR001/],
+]) {
+  const result = await execFileAsync(zero, ["check", `conformance/native/fail/${fixture}`]).catch((error) => error);
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, code);
+}
+
 console.log("conformance ok");

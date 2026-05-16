@@ -191,13 +191,31 @@ static bool scope_adjust_borrow_count(Scope *scope, const char *name, bool mut_b
 
 static void scope_set_borrow_origin(Scope *scope, const char *name, const char *root, bool mut_borrow) {
   if (!scope || !name || !root) return;
-  for (size_t i = 0; i < scope->len; i++) {
-    if (strcmp(scope->names[i], name) == 0) {
-      free(scope->borrow_root[i]);
-      scope->borrow_root[i] = z_strdup(root);
-      scope->borrow_mut[i] = mut_borrow;
-      scope_adjust_borrow_count(scope, root, mut_borrow, 1);
-      return;
+  for (Scope *cursor = scope; cursor; cursor = cursor->parent) {
+    for (size_t i = 0; i < cursor->len; i++) {
+      if (strcmp(cursor->names[i], name) == 0) {
+        if (cursor->borrow_root[i]) scope_adjust_borrow_count(scope, cursor->borrow_root[i], cursor->borrow_mut[i], -1);
+        free(cursor->borrow_root[i]);
+        cursor->borrow_root[i] = z_strdup(root);
+        cursor->borrow_mut[i] = mut_borrow;
+        scope_adjust_borrow_count(scope, root, mut_borrow, 1);
+        return;
+      }
+    }
+  }
+}
+
+static void scope_clear_borrow_origin(Scope *scope, const char *name) {
+  if (!scope || !name) return;
+  for (Scope *cursor = scope; cursor; cursor = cursor->parent) {
+    for (size_t i = 0; i < cursor->len; i++) {
+      if (strcmp(cursor->names[i], name) == 0) {
+        if (cursor->borrow_root[i]) scope_adjust_borrow_count(scope, cursor->borrow_root[i], cursor->borrow_mut[i], -1);
+        free(cursor->borrow_root[i]);
+        cursor->borrow_root[i] = NULL;
+        cursor->borrow_mut[i] = false;
+        return;
+      }
     }
   }
 }
@@ -273,6 +291,21 @@ static void member_name_buf(const Expr *expr, ZBuf *buf) {
     zbuf_append_char(buf, '.');
     zbuf_append(buf, expr->text);
   }
+}
+
+static bool is_world_stream_write_callee(const Expr *callee, Scope *scope) {
+  if (!callee || callee->kind != EXPR_MEMBER || !callee->text || strcmp(callee->text, "write") != 0) return false;
+  const Expr *stream = callee->left;
+  if (!stream || stream->kind != EXPR_MEMBER || !stream->text) return false;
+  if (strcmp(stream->text, "out") != 0 && strcmp(stream->text, "err") != 0) return false;
+  const Expr *root = stream->left;
+  if (!root || root->kind != EXPR_IDENT || !root->text) return false;
+  const char *root_type = scope_type(scope, root->text);
+  return root_type && strcmp(root_type, "World") == 0;
+}
+
+static bool is_world_stream_write_call(const Expr *expr, Scope *scope) {
+  return expr && expr->kind == EXPR_CALL && is_world_stream_write_callee(expr->left, scope);
 }
 
 static const char *std_call_return_type(const Expr *callee) {
@@ -405,6 +438,7 @@ static const char *std_call_return_type(const Expr *callee) {
   else if (strcmp(name.data, "std.fs.atomicWrite") == 0) result = "Bool";
   else if (strcmp(name.data, "std.fs.fileLen") == 0) result = "Maybe<usize>";
   else if (strcmp(name.data, "std.fs.fileLenOrRaise") == 0) result = "usize";
+  else if (strcmp(name.data, "Response.text") == 0) result = "Response";
   zbuf_free(&name);
   return result;
 }
@@ -535,6 +569,7 @@ static int std_call_arg_count(const char *name) {
   if (strcmp(name, "std.fs.atomicWrite") == 0) return 3;
   if (strcmp(name, "std.fs.fileLen") == 0) return 1;
   if (strcmp(name, "std.fs.fileLenOrRaise") == 0) return 1;
+  if (strcmp(name, "Response.text") == 0) return 1;
   return -1;
 }
 
@@ -658,6 +693,7 @@ static const char *std_call_arg_type(const char *name, size_t index) {
   if (strcmp(name, "std.fs.atomicWrite") == 0) return index == 2 ? "Span<u8>" : "String";
   if (strcmp(name, "std.fs.fileLen") == 0) return "mutref<File>";
   if (strcmp(name, "std.fs.fileLenOrRaise") == 0) return "mutref<File>";
+  if (strcmp(name, "Response.text") == 0) return "String";
   return NULL;
 }
 
@@ -2599,6 +2635,7 @@ static const char *expr_type(const Program *program, const Expr *expr, Scope *sc
         return fun->return_type;
       }
       if (expr->left && expr->left->kind == EXPR_MEMBER) {
+        if (is_world_stream_write_callee(expr->left, scope)) return "Void";
         const Shape *shape = NULL;
         const Function *method = find_namespace_shape_method(program, expr->left, &shape);
         if (method) {
@@ -2708,6 +2745,7 @@ static const char *expr_type(const Program *program, const Expr *expr, Scope *sc
         char ref_shape_type[128];
         if (owned_inner_text(left_type, owned_shape_type, sizeof(owned_shape_type))) left_type = owned_shape_type;
         if (ref_inner_text(left_type, ref_shape_type, sizeof(ref_shape_type))) left_type = ref_shape_type;
+        if (strcmp(left_type, "World") == 0 && (strcmp(expr->text, "out") == 0 || strcmp(expr->text, "err") == 0)) return "WorldStream";
         const Shape *shape = find_shape_for_type(program, left_type);
         if (shape) {
           const Param *field = find_shape_field(shape, expr->text);
@@ -2937,11 +2975,22 @@ static bool check_call_callee(const Program *program, const Expr *callee, Scope 
   if (callee->kind == EXPR_IDENT) {
     const Function *fun = find_function(program, callee->text);
     if (fun) return true;
-    return check_expr(program, callee, scope, diag);
+    if (!scope_has(scope, callee->text)) return check_expr(program, callee, scope, diag);
+    const char *actual = expr_type(program, callee, scope);
+    return set_diag_detail(diag, 3005, "call target is not a function", callee->line, callee->column, "function name", actual, "call a declared function instead of a local value");
   }
   if (callee->kind == EXPR_MEMBER && find_namespace_shape_method(program, callee, NULL)) return true;
   if (callee->kind == EXPR_MEMBER && find_constrained_interface_method(program, callee, NULL)) return true;
-  if (callee->kind == EXPR_MEMBER) return check_expr(program, callee, scope, diag);
+  if (callee->kind == EXPR_MEMBER) {
+    ZBuf name;
+    zbuf_init(&name);
+    member_name_buf(callee, &name);
+    bool known_builtin_call = std_call_arg_count(name.data) >= 0;
+    bool std_namespace = strncmp(name.data, "std.", strlen("std.")) == 0;
+    zbuf_free(&name);
+    if (known_builtin_call || std_namespace || is_world_stream_write_callee(callee, scope)) return true;
+    return check_expr(program, callee, scope, diag);
+  }
   return check_expr(program, callee, scope, diag);
 }
 
@@ -2965,12 +3014,35 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
         snprintf(message, sizeof(message), "unknown identifier '%s'", expr->text);
         return set_diag_detail(diag, 3003, message, expr->line, expr->column, "visible local, parameter, function, or builtin", "no matching visible symbol", "declare the name before using it");
       }
+      if (function_exists(program, expr->text) && !scope_has(scope, expr->text)) {
+        char message[256];
+        snprintf(message, sizeof(message), "function '%s' cannot be used as a runtime value", expr->text);
+        return set_diag_detail(diag, 3005, message, expr->line, expr->column, "function call expression", "function name", "call the function with parentheses");
+      }
+      if (is_builtin_value(expr->text) && !scope_has(scope, expr->text)) {
+        char message[256];
+        snprintf(message, sizeof(message), "builtin namespace '%s' cannot be used as a runtime value", expr->text);
+        return set_diag_detail(diag, 3005, message, expr->line, expr->column, "runtime value", "builtin namespace", "use a supported member call such as Response.text(...) or std.fs.host()");
+      }
       {
         const char *actual = scope_type(scope, expr->text);
+        if (actual && strcmp(actual, "Type") == 0) {
+          char message[256];
+          snprintf(message, sizeof(message), "type name '%s' cannot be used as a runtime value", expr->text);
+          return set_diag_detail(diag, 3005, message, expr->line, expr->column, "runtime value", "type name", "use the type name in an annotation or constructor context");
+        }
         if (actual && type_is_owned(actual) && scope_is_moved(scope, expr->text)) {
           char actual_detail[160];
           snprintf(actual_detail, sizeof(actual_detail), "%s was moved", expr->text);
           return set_diag_detail(diag, 3013, "owned value was already moved", expr->line, expr->column, "live owned binding", actual_detail, "stop using the old binding after transferring ownership");
+        }
+        size_t shared = 0;
+        size_t mut = 0;
+        scope_borrow_counts(scope, expr->text, &shared, &mut);
+        if (mut > 0) {
+          char actual_detail[160];
+          snprintf(actual_detail, sizeof(actual_detail), "%s has an active mutable borrow", expr->text);
+          return set_diag_detail(diag, 3029, "cannot read a value while it is mutably borrowed", expr->line, expr->column, "unborrowed value or shared borrow only", actual_detail, "end the mutable borrow's lexical scope before reading the value");
         }
       }
       if (expected && type_is_named_generic(expected, "MutSpan")) {
@@ -3011,15 +3083,33 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
         char ref_shape_type[128];
         if (owned_inner_text(left_type, owned_shape_type, sizeof(owned_shape_type))) left_type = owned_shape_type;
         if (ref_inner_text(left_type, ref_shape_type, sizeof(ref_shape_type))) left_type = ref_shape_type;
-        const Shape *shape = find_shape_for_type(program, left_type);
-        if (shape && !find_shape_field(shape, expr->text)) {
-          char message[256];
-          snprintf(message, sizeof(message), "shape '%s' has no field '%s'", shape->name, expr->text);
-          return set_diag_detail(diag, 3101, message, expr->line, expr->column, "declared shape field", expr->text, "rename the field or update the shape");
+        if (strcmp(left_type, "World") == 0 && (strcmp(expr->text, "out") == 0 || strcmp(expr->text, "err") == 0)) {
+          set_expr_resolved_type(expr, "WorldStream");
+          return true;
         }
+        const Shape *shape = find_shape_for_type(program, left_type);
+        if (shape) {
+          if (!find_shape_field(shape, expr->text)) {
+            char message[256];
+            snprintf(message, sizeof(message), "shape '%s' has no field '%s'", shape->name, expr->text);
+            return set_diag_detail(diag, 3101, message, expr->line, expr->column, "declared shape field", expr->text, "rename the field or update the shape");
+          }
+          if (!expr->resolved_type) set_expr_resolved_type(expr, expr_type(program, expr, scope));
+          return true;
+        }
+        {
+          const char *inner = NULL;
+          size_t inner_len = 0;
+          if (type_has_generic_arg(left_type, "Maybe", &inner, &inner_len)) {
+            if (strcmp(expr->text, "has") == 0 || strcmp(expr->text, "value") == 0) {
+              if (!expr->resolved_type) set_expr_resolved_type(expr, expr_type(program, expr, scope));
+              return true;
+            }
+            return set_diag_detail(diag, 3101, "unknown Maybe member", expr->line, expr->column, "has or value", expr->text, "use .has to test a Maybe or .value after proving it is present");
+          }
+        }
+        return set_diag_detail(diag, 3027, "member access requires a shape, Maybe value, enum case, or choice case", expr->line, expr->column, "declared field or variant case", left_type, "remove the member access or use a value with declared members");
       }
-      if (!expr->resolved_type) set_expr_resolved_type(expr, expr_type(program, expr, scope));
-      return true;
     case EXPR_INDEX: {
       if (!check_expr(program, expr->left, scope, diag)) return false;
       const char *base_type = expr_type(program, expr->left, scope);
@@ -3077,6 +3167,10 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
       const char *builtin_type = builtin_fallible_return_type(expr->left);
       if (builtin_type) {
         set_expr_resolved_type(expr, builtin_type);
+        return true;
+      }
+      if (is_world_stream_write_call(expr->left, scope)) {
+        set_expr_resolved_type(expr, "Void");
         return true;
       }
       const char *inner = NULL;
@@ -3215,13 +3309,20 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
           return true;
         }
         const Expr *receiver = expr->left->left;
+        ZBuf callee_name;
+        zbuf_init(&callee_name);
+        member_name_buf(expr->left, &callee_name);
+        bool builtin_member_callee = strncmp(callee_name.data, "std.", strlen("std.")) == 0 ||
+          std_call_arg_count(callee_name.data) >= 0 ||
+          is_world_stream_write_callee(expr->left, scope);
+        zbuf_free(&callee_name);
         bool namespace_owner = receiver && receiver->kind == EXPR_IDENT && find_shape(program, receiver->text);
         char **receiver_constraint_args = NULL;
         size_t receiver_constraint_arg_len = 0;
         bool constrained_owner = receiver && receiver->kind == EXPR_IDENT &&
           constrained_interface_for_type_param(program, checking_function, receiver->text, &receiver_constraint_args, &receiver_constraint_arg_len);
         free_type_arg_list(receiver_constraint_args, receiver_constraint_arg_len);
-        if (receiver && !namespace_owner && !constrained_owner) {
+        if (receiver && !namespace_owner && !constrained_owner && !builtin_member_callee) {
           if (!check_expr(program, receiver, scope, diag)) return false;
           const char *receiver_type_raw = expr_type(program, receiver, scope);
           char receiver_type_buf[192];
@@ -3449,6 +3550,19 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
         } else {
           if (!check_expr(program, expr->args.items[i], scope, diag)) return false;
         }
+      }
+      if (is_world_stream_write_call(expr, scope)) {
+        if (expr->args.len != 1) return set_diag_detail(diag, 3004, "World stream write expects one argument", expr->line, expr->column, "world.out.write(text)", "wrong argument count", "pass exactly one String or byte span argument");
+        if (!check_expr_expected(program, expr->args.items[0], scope, diag, "String")) return false;
+        const char *actual = expr_type(program, expr->args.items[0], scope);
+        if (!types_compatible("String", actual) && !types_compatible("Span<u8>", actual)) {
+          return set_diag_detail(diag, 3005, "World stream write argument has incompatible type", expr->args.items[0]->line, expr->args.items[0]->column, "String or Span<u8>", actual, "pass text or a byte span to the stream writer");
+        }
+        if (allow_fallible_call == 0) {
+          return set_diag_detail(diag, 1003, "fallible World stream write must be checked", expr->line, expr->column, "check world.out.write(...)", "unchecked World stream write", "prefix the write with check in a function marked raises");
+        }
+        set_expr_resolved_type(expr, "Void");
+        return true;
       }
       {
         const Function *fun = fallible_callee(program, expr);
@@ -3739,12 +3853,21 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
     case EXPR_SHAPE_LITERAL: {
       const Shape *shape = find_shape(program, expr->text);
       if (!shape) return set_diag_detail(diag, 3009, "unknown shape literal", expr->line, expr->column, "declared shape", expr->text, "declare the shape before constructing it");
+      const char *expected_shape_type = expected;
+      char expected_owned_inner[160];
+      if (owned_inner_text(expected_shape_type, expected_owned_inner, sizeof(expected_owned_inner))) expected_shape_type = expected_owned_inner;
+      if (expected_shape_type && strcmp(expected_shape_type, "Unknown") != 0) {
+        const Shape *expected_shape = find_shape_for_type(program, type_strip_const(expected_shape_type));
+        if (!expected_shape || strcmp(expected_shape->name, shape->name) != 0) {
+          return set_diag_detail(diag, 3006, "shape literal type does not match expected type", expr->line, expr->column, shape->name, expected, "assign the shape literal to the matching shape type");
+        }
+      }
       GenericBinding *shape_bindings = NULL;
       size_t shape_binding_len = 0;
       if (shape->type_params.len > 0) {
         char **args = NULL;
         size_t arg_len = 0;
-        if (!expected || !type_generic_arg_list(resolve_alias_type(expected), shape->name, &args, &arg_len) || arg_len != shape->type_params.len) {
+        if (!expected_shape_type || !type_generic_arg_list(resolve_alias_type(expected_shape_type), shape->name, &args, &arg_len) || arg_len != shape->type_params.len) {
           free_type_arg_list(args, arg_len);
           return set_diag_detail(diag, 3034, "generic shape literal requires an explicit annotated type", expr->line, expr->column, "let value: Shape<T> = Shape { ... }", expected ? expected : "untyped shape literal", "add an explicit generic shape type annotation");
         }
@@ -3778,6 +3901,14 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
       }
       for (size_t i = 0; i < expr->fields.len; i++) {
         FieldInit *field = &expr->fields.items[i];
+        for (size_t previous = 0; previous < i; previous++) {
+          if (strcmp(expr->fields.items[previous].name, field->name) == 0) {
+            bool ok = set_diag_detail(diag, 3008, "duplicate shape literal field", field->line, field->column, "one initializer per field", field->name, "remove the duplicate field initializer");
+            generic_bindings_free(shape_bindings, shape_binding_len);
+            free(shape_bindings);
+            return ok;
+          }
+        }
         const Param *shape_field = find_shape_field(shape, field->name);
         if (!shape_field) {
           char message[256];
@@ -3846,7 +3977,7 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
         zbuf_append_char(&type_buf, '>');
         normalized_shape_type = type_buf.data;
       }
-      const char *literal_resolved_type = normalized_shape_type ? normalized_shape_type : (expected ? expected : shape->name);
+      const char *literal_resolved_type = normalized_shape_type ? normalized_shape_type : shape->name;
       char owned_literal_inner[160];
       if (owned_inner_text(literal_resolved_type, owned_literal_inner, sizeof(owned_literal_inner))) literal_resolved_type = owned_literal_inner;
       set_expr_resolved_type(expr, literal_resolved_type);
@@ -3859,6 +3990,7 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
       const char *element_expected = NULL;
       char expected_len_text[64] = {0};
       char inferred_type[160];
+      char inferred_element_type[160] = {0};
       if (expected && expected[0] == '[') {
         const char *close = strchr(expected, ']');
         if (close && close[1]) {
@@ -3888,6 +4020,15 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
             char message[256];
             snprintf(message, sizeof(message), "array literal element %zu has incompatible type", i + 1);
             return set_diag_detail(diag, 3006, message, expr->args.items[i]->line, expr->args.items[i]->column, element_expected, actual, "use elements whose types match the fixed-array element type");
+          }
+        } else {
+          const char *actual = expr_type(program, expr->args.items[i], scope);
+          if (i == 0) {
+            snprintf(inferred_element_type, sizeof(inferred_element_type), "%s", actual ? actual : "Unknown");
+          } else if (!types_compatible(inferred_element_type, actual)) {
+            char message[256];
+            snprintf(message, sizeof(message), "array literal element %zu has incompatible type", i + 1);
+            return set_diag_detail(diag, 3006, message, expr->args.items[i]->line, expr->args.items[i]->column, inferred_element_type, actual, "annotate the array or use elements with one inferred element type");
           }
         }
       }
@@ -4034,6 +4175,20 @@ static bool register_borrow_binding(const Stmt *stmt, Scope *scope) {
   return true;
 }
 
+static void update_borrow_assignment(const Expr *target, const Expr *value, Scope *scope) {
+  if (!target || target->kind != EXPR_IDENT || !scope_has(scope, target->text)) return;
+  const char *target_type = scope_type(scope, target->text);
+  if (!type_is_named_generic(target_type, "ref") && !type_is_named_generic(target_type, "mutref")) return;
+  char root[128];
+  bool mut_borrow = false;
+  if (expr_borrow_origin(value, scope, root, sizeof(root), &mut_borrow)) {
+    mut_borrow = type_is_named_generic(target_type, "mutref");
+    scope_set_borrow_origin(scope, target->text, root, mut_borrow);
+  } else {
+    scope_clear_borrow_origin(scope, target->text);
+  }
+}
+
 static bool check_assignment_not_borrowed(const Expr *target, Scope *scope, ZDiag *diag) {
   char root[128];
   if (!expr_root_ident(target, root, sizeof(root))) return true;
@@ -4046,16 +4201,46 @@ static bool check_assignment_not_borrowed(const Expr *target, Scope *scope, ZDia
   return set_diag_detail(diag, 3029, "cannot assign to a value while it is borrowed", target->line, target->column, "unborrowed assignment target", actual, "end the borrow's lexical scope before assigning to this value");
 }
 
-static bool check_return_borrow_escape(const Expr *expr, Scope *scope, ZDiag *diag) {
+static bool check_return_borrow_escape(const Program *program, const Expr *expr, Scope *scope, ZDiag *diag) {
+  (void)program;
   if (!expr) return true;
   char root[128];
   bool mut_borrow = false;
   if (!expr_borrow_origin(expr, scope, root, sizeof(root), &mut_borrow)) return true;
+  if (!scope_is_param(scope, root)) {
+    char actual[160];
+    snprintf(actual, sizeof(actual), "reference to local '%s'", root);
+    return set_diag_detail(diag, 3030, "cannot return a reference to a local binding", expr->line, expr->column, "reference derived from a parameter or longer-lived value", actual, "return an owned value or keep the borrow inside the current function");
+  }
   (void)mut_borrow;
-  if (scope_is_param(scope, root)) return true;
-  char actual[160];
-  snprintf(actual, sizeof(actual), "reference to local '%s'", root);
-  return set_diag_detail(diag, 3030, "cannot return a reference to a local binding", expr->line, expr->column, "reference derived from a parameter or longer-lived value", actual, "return an owned value or keep the borrow inside the current function");
+  return true;
+}
+
+static bool check_return_call_borrow_escape(const Program *program, const Expr *expr, Scope *scope, ZDiag *diag) {
+  if (!expr || expr->kind != EXPR_CALL || !expr->left) return true;
+  const char *return_type = expr_type(program, expr, scope);
+  if (!type_is_named_generic(return_type, "ref") && !type_is_named_generic(return_type, "mutref")) return true;
+  const Function *callee = NULL;
+  if (expr->left->kind == EXPR_IDENT) callee = find_function(program, expr->left->text);
+  if (!callee) return true;
+  for (size_t i = 0; i < expr->args.len && i < callee->params.len; i++) {
+    const char *param_type = callee->params.items[i].type;
+    if (!type_is_named_generic(param_type, "ref") && !type_is_named_generic(param_type, "mutref")) continue;
+    char arg_root[128];
+    bool arg_mut_borrow = false;
+    if (!expr_borrow_origin(expr->args.items[i], scope, arg_root, sizeof(arg_root), &arg_mut_borrow)) continue;
+    (void)arg_mut_borrow;
+    if (scope_is_param(scope, arg_root)) continue;
+    char actual[160];
+    snprintf(actual, sizeof(actual), "call may return reference derived from local '%s'", arg_root);
+    return set_diag_detail(diag, 3030, "cannot return a reference derived from a local call argument", expr->line, expr->column, "reference derived from a parameter or longer-lived value", actual, "keep local borrows inside the current function or return an owned value");
+  }
+  return true;
+}
+
+static bool check_return_reference_escape(const Program *program, const Expr *expr, Scope *scope, ZDiag *diag) {
+  if (!check_return_borrow_escape(program, expr, scope, diag)) return false;
+  return check_return_call_borrow_escape(program, expr, scope, diag);
 }
 
 static bool parse_match_int_literal(const char *text, unsigned long long *out) {
@@ -4174,6 +4359,7 @@ static bool check_stmt(const Program *program, const Function *fun, const Stmt *
     }
     mark_owned_move_if_needed(stmt->expr, scope, expected);
     mark_owned_target_live_if_needed(target, scope, expected);
+    update_borrow_assignment(target, stmt->expr, scope);
     return true;
   }
   if (stmt->kind == STMT_CHECK) {
@@ -4184,7 +4370,16 @@ static bool check_stmt(const Program *program, const Function *fun, const Stmt *
     if (!checked_ok) return false;
     const Function *callee = fallible_callee(program, stmt->expr);
     if (callee && !function_error_sets_compatible(fun, callee, diag, stmt->expr)) return false;
+    const char *builtin_type = builtin_fallible_return_type(stmt->expr);
+    if (builtin_type && !function_error_sets_include_builtin(fun, diag, stmt->expr)) return false;
     const char *checked_type = expr_type(program, stmt->expr, scope);
+    bool world_stream_write = is_world_stream_write_call(stmt->expr, scope);
+    const char *inner = NULL;
+    size_t inner_len = 0;
+    bool maybe_value = type_has_generic_arg(checked_type, "Maybe", &inner, &inner_len);
+    if (!callee && !builtin_type && !world_stream_write && !maybe_value) {
+      return set_diag_detail(diag, 1001, "`check` expects Maybe<T> or a fallible function call", stmt->line, stmt->column, "Maybe<T> or raises { ... } call", checked_type, "check a Maybe value or a named-error fallible function");
+    }
     if (type_is_named_generic(checked_type, "Maybe") && !type_is_named_generic(fun->return_type, "Maybe")) {
       return set_diag_detail(diag, 1001, "`check` on Maybe<T> requires a Maybe return type", stmt->line, stmt->column, "function returning Maybe<T>", fun->return_type ? fun->return_type : "Void", "return Maybe<T> from this function or handle the Maybe value explicitly");
     }
@@ -4208,7 +4403,7 @@ static bool check_stmt(const Program *program, const Function *fun, const Stmt *
       return set_diag_detail(diag, 3007, "return type does not match function return type", stmt->line, stmt->column, fun->return_type, actual, "return a value compatible with the function signature");
     }
     if ((type_is_named_generic(fun->return_type, "ref") || type_is_named_generic(fun->return_type, "mutref")) &&
-        !check_return_borrow_escape(stmt->expr, scope, diag)) return false;
+        !check_return_reference_escape(program, stmt->expr, scope, diag)) return false;
     mark_owned_move_if_needed(stmt->expr, scope, fun->return_type);
     return true;
   }
@@ -4320,6 +4515,40 @@ static bool check_stmt_vec(const Program *program, const Function *fun, const St
   return check_stmt_vec_with_loop(program, fun, body, scope, diag, 0);
 }
 
+static bool stmt_vec_guarantees_exit(const StmtVec *body, bool function_raises);
+
+static bool stmt_guarantees_exit(const Stmt *stmt, bool function_raises) {
+  if (!stmt) return false;
+  if (stmt->kind == STMT_RETURN) return true;
+  if (stmt->kind == STMT_RAISE) return function_raises;
+  if (stmt->kind == STMT_IF) {
+    return stmt_vec_guarantees_exit(&stmt->then_body, function_raises) &&
+           stmt_vec_guarantees_exit(&stmt->else_body, function_raises);
+  }
+  if (stmt->kind == STMT_MATCH) {
+    if (stmt->match_arms.len == 0) return false;
+    for (size_t i = 0; i < stmt->match_arms.len; i++) {
+      if (!stmt_vec_guarantees_exit(&stmt->match_arms.items[i].body, function_raises)) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+static bool stmt_vec_guarantees_exit(const StmtVec *body, bool function_raises) {
+  if (!body) return false;
+  for (size_t i = 0; i < body->len; i++) {
+    if (stmt_guarantees_exit(body->items[i], function_raises)) return true;
+  }
+  return false;
+}
+
+static bool check_function_has_required_return(const Function *fun, ZDiag *diag) {
+  if (!fun || !fun->return_type || strcmp(fun->return_type, "Void") == 0) return true;
+  if (stmt_vec_guarantees_exit(&fun->body, fun->raises)) return true;
+  return set_diag_detail(diag, 3007, "non-void function must return a value on every path", fun->line, fun->column, fun->return_type, "function body may fall through", "add an explicit return or raise on every path");
+}
+
 static bool validate_drop_method(const Shape *shape, const Function *method, ZDiag *diag) {
   if (strcmp(method->name, "drop") != 0) return true;
   if (method->raises) {
@@ -4367,6 +4596,7 @@ static bool check_shape_method_body(const Program *program, const Shape *shape, 
   Function checking_method = *method;
   checking_method.return_type = type_substitute_generic(method->return_type, bindings, binding_len);
   bool ok = check_stmt_vec(program, &checking_method, &method->body, &scope, diag);
+  if (ok) ok = check_function_has_required_return(&checking_method, diag);
   free(checking_method.return_type);
   generic_bindings_free(bindings, binding_len);
   free(bindings);
@@ -4477,6 +4707,106 @@ static bool validate_type_param_constraints(const Program *program, const Functi
   return true;
 }
 
+static bool is_builtin_type_name(const char *name) {
+  if (!name) return false;
+  const char *names[] = {
+    "Void", "Bool", "bool", "String", "char", "Type",
+    "World", "WorldStream", "Fs", "File", "ByteBuf", "NullAlloc", "FixedBufAlloc", "PageAlloc", "GeneralAlloc",
+    "Vec", "Map", "Set", "Duration", "RandSource", "ProcStatus", "Address", "Net", "Conn", "Listener",
+    "HttpMethod", "HttpClient", "HttpServer", "JsonDoc", "BufferedReader", "BufferedWriter",
+    "Request", "Response", "Env", "Args", "Clock", "Rand", "Proc", "Alloc",
+    "Maybe", "Span", "MutSpan", "ref", "mutref", "owned",
+    NULL
+  };
+  for (size_t i = 0; names[i]; i++) {
+    if (strcmp(name, names[i]) == 0) return true;
+  }
+  return is_int_type(name) || is_float_type(name);
+}
+
+static bool type_param_name_known(const ParamVec *primary, const ParamVec *secondary, const char *name) {
+  const ParamVec *sets[] = {primary, secondary, NULL};
+  for (size_t set_index = 0; sets[set_index]; set_index++) {
+    const ParamVec *params = sets[set_index];
+    for (size_t i = 0; i < params->len; i++) {
+      if (!params->items[i].is_static && params->items[i].name && strcmp(params->items[i].name, name) == 0) return true;
+    }
+  }
+  return false;
+}
+
+static bool program_type_name_known(const Program *program, const ParamVec *primary, const ParamVec *secondary, const char *name, bool allow_self) {
+  if (!name || !name[0]) return false;
+  if (allow_self && strcmp(name, "Self") == 0) return true;
+  if (is_builtin_type_name(name) || type_param_name_known(primary, secondary, name)) return true;
+  if (find_shape(program, name) || find_enum(program, name) || find_choice(program, name) || find_alias(program, name)) return true;
+  for (size_t i = 0; program && i < program->interfaces.len; i++) {
+    if (strcmp(program->interfaces.items[i].name, name) == 0) return true;
+  }
+  return false;
+}
+
+static bool validate_type_names_inner(const Program *program, const char *type, const ParamVec *primary, const ParamVec *secondary, bool allow_self, ZDiag *diag, int line, int column) {
+  if (!type) return true;
+  type = type_strip_const(type);
+  if (strcmp(type, "Self") == 0 && allow_self) return true;
+  if (type[0] == '[') {
+    const char *close = strchr(type, ']');
+    if (!close || !close[1]) return true;
+    return validate_type_names_inner(program, close + 1, primary, secondary, allow_self, diag, line, column);
+  }
+  const char *open = strchr(type, '<');
+  if (open && open > type) {
+    char *name = z_strndup(type, (size_t)(open - type));
+    if (!program_type_name_known(program, primary, secondary, name, allow_self)) {
+      char actual[160];
+      snprintf(actual, sizeof(actual), "unknown type '%s'", name);
+      free(name);
+      return set_diag_detail(diag, 3003, "unknown type name", line, column, "declared type name", actual, "declare the type or correct the annotation");
+    }
+    char **args = NULL;
+    size_t arg_len = 0;
+    bool parsed = type_generic_arg_list(type, name, &args, &arg_len);
+    const Shape *shape = find_shape(program, name);
+    if (parsed && shape) {
+      if (arg_len != shape->type_params.len) {
+        char actual[160];
+        snprintf(actual, sizeof(actual), "%zu type argument(s)", arg_len);
+        free_type_arg_list(args, arg_len);
+        free(name);
+        return set_diag_detail(diag, 3032, "shape type argument count mismatch", line, column, "one argument per shape type parameter", actual, "match the shape declaration's type parameter list");
+      }
+      for (size_t i = 0; i < arg_len; i++) {
+        if (shape->type_params.items[i].is_static) continue;
+        if (!validate_type_names_inner(program, args[i], primary, secondary, allow_self, diag, line, column)) {
+          free_type_arg_list(args, arg_len);
+          free(name);
+          return false;
+        }
+      }
+    } else if (parsed) {
+      for (size_t i = 0; i < arg_len; i++) {
+        if (!validate_type_names_inner(program, args[i], primary, secondary, allow_self, diag, line, column)) {
+          free_type_arg_list(args, arg_len);
+          free(name);
+          return false;
+        }
+      }
+    }
+    free_type_arg_list(args, arg_len);
+    free(name);
+    return true;
+  }
+  if (program_type_name_known(program, primary, secondary, type, allow_self)) return true;
+  char actual[160];
+  snprintf(actual, sizeof(actual), "unknown type '%s'", type);
+  return set_diag_detail(diag, 3003, "unknown type name", line, column, "declared type name", actual, "declare the type or correct the annotation");
+}
+
+static bool validate_type_names(const Program *program, const char *type, const ParamVec *primary, const ParamVec *secondary, bool allow_self, ZDiag *diag, int line, int column) {
+  return validate_type_names_inner(program, type, primary, secondary, allow_self, diag, line, column);
+}
+
 static bool validate_interface_decl(const Program *program, const InterfaceDecl *interface, ZDiag *diag) {
   if (!interface) return true;
   for (size_t previous = 0; previous < program->interfaces.len; previous++) {
@@ -4491,10 +4821,12 @@ static bool validate_interface_decl(const Program *program, const InterfaceDecl 
       return set_diag_detail(diag, 3038, "interface methods cannot have bodies", method->line, method->column, "method signature only", "method body", "move implementation to a concrete shape static method");
     }
     if (!validate_type_form(method->return_type, diag, method->line, method->column)) return false;
+    if (!validate_type_names(program, method->return_type, &interface->type_params, &method->type_params, true, diag, method->line, method->column)) return false;
     if (!validate_function_error_set(method, diag)) return false;
     for (size_t param_index = 0; param_index < method->params.len; param_index++) {
       const Param *param = &method->params.items[param_index];
       if (!validate_type_form(param->type, diag, param->line, param->column)) return false;
+      if (!validate_type_names(program, param->type, &interface->type_params, &method->type_params, true, diag, param->line, param->column)) return false;
     }
     for (size_t previous = 0; previous < method_index; previous++) {
       if (strcmp(interface->methods.items[previous].name, method->name) == 0) {
@@ -4557,6 +4889,7 @@ bool z_check_program(const Program *program, ZDiag *diag) {
   for (size_t i = 0; i < program->aliases.len; i++) {
     const TypeAlias *alias = &program->aliases.items[i];
     if (!validate_type_form(alias->target, diag, alias->line, alias->column)) return false;
+    if (!validate_type_names(program, alias->target, NULL, NULL, false, diag, alias->line, alias->column)) return false;
     for (size_t previous = 0; previous < i; previous++) {
       if (strcmp(program->aliases.items[previous].name, alias->name) == 0) {
         return set_diag_detail(diag, 3036, "duplicate type alias declaration", alias->line, alias->column, "unique type alias name", "type alias already declared", "rename one alias");
@@ -4587,6 +4920,10 @@ bool z_check_program(const Program *program, ZDiag *diag) {
       scope_free(&const_scope);
       return false;
     }
+    if (declared_type && !validate_type_names(program, declared_type, NULL, NULL, false, diag, item->line, item->column)) {
+      scope_free(&const_scope);
+      return false;
+    }
     if (!check_expr_expected(program, item->expr, &const_scope, diag, declared_type)) {
       scope_free(&const_scope);
       return false;
@@ -4610,6 +4947,12 @@ bool z_check_program(const Program *program, ZDiag *diag) {
   for (size_t i = 0; i < program->shapes.len; i++) {
     for (size_t type_param_index = 0; type_param_index < program->shapes.items[i].type_params.len; type_param_index++) {
       Param *type_param = &program->shapes.items[i].type_params.items[type_param_index];
+      for (size_t previous = 0; previous < type_param_index; previous++) {
+        if (strcmp(program->shapes.items[i].type_params.items[previous].name, type_param->name) == 0) {
+          return set_diag_detail(diag, 3008, "duplicate shape type parameter", type_param->line, type_param->column, "unique type parameter name", type_param->name, "rename one type parameter");
+        }
+      }
+      if (type_param->is_static && !validate_type_names(program, type_param->type, NULL, NULL, false, diag, type_param->line, type_param->column)) return false;
       if (type_param->is_static && !is_static_value_param_type(program, type_param->type)) {
         return set_diag_detail(diag, 3043, "static value parameter type is not supported", type_param->line, type_param->column, "integer, Bool, or enum static parameter", type_param->type ? type_param->type : "Unknown", "use a concrete integer, Bool, or enum type for this static parameter");
       }
@@ -4617,15 +4960,23 @@ bool z_check_program(const Program *program, ZDiag *diag) {
     for (size_t field_index = 0; field_index < program->shapes.items[i].fields.len; field_index++) {
       Param *field = &program->shapes.items[i].fields.items[field_index];
       if (!validate_type_form(field->type, diag, field->line, field->column)) return false;
+      if (!validate_type_names(program, field->type, &program->shapes.items[i].type_params, NULL, false, diag, field->line, field->column)) return false;
+      for (size_t previous = 0; previous < field_index; previous++) {
+        if (strcmp(program->shapes.items[i].fields.items[previous].name, field->name) == 0) {
+          return set_diag_detail(diag, 3008, "duplicate shape field", field->line, field->column, "unique field name", field->name, "rename or remove one field");
+        }
+      }
     }
     if (!validate_generic_owned_fields(&program->shapes.items[i], diag)) return false;
     if (!validate_shape_layout(&program->shapes.items[i], diag)) return false;
     for (size_t method_index = 0; method_index < program->shapes.items[i].methods.len; method_index++) {
       Function *method = &program->shapes.items[i].methods.items[method_index];
       if (!validate_shape_method_type_form(method->return_type, diag, method->line, method->column)) return false;
+      if (!validate_type_names(program, method->return_type, &program->shapes.items[i].type_params, &method->type_params, true, diag, method->line, method->column)) return false;
       for (size_t param_index = 0; param_index < method->params.len; param_index++) {
         Param *param = &method->params.items[param_index];
         if (!validate_shape_method_type_form(param->type, diag, param->line, param->column)) return false;
+        if (!validate_type_names(program, param->type, &program->shapes.items[i].type_params, &method->type_params, true, diag, param->line, param->column)) return false;
       }
       if (!validate_drop_method(&program->shapes.items[i], method, diag)) return false;
       if (!check_shape_method_body(program, &program->shapes.items[i], method, diag)) return false;
@@ -4640,6 +4991,12 @@ bool z_check_program(const Program *program, ZDiag *diag) {
     for (size_t case_index = 0; case_index < program->enums.items[i].cases.len; case_index++) {
       Param *item_case = &program->enums.items[i].cases.items[case_index];
       if (!validate_type_form(item_case->type, diag, item_case->line, item_case->column)) return false;
+      if (!validate_type_names(program, item_case->type, NULL, NULL, false, diag, item_case->line, item_case->column)) return false;
+      for (size_t previous = 0; previous < case_index; previous++) {
+        if (strcmp(program->enums.items[i].cases.items[previous].name, item_case->name) == 0) {
+          return set_diag_detail(diag, 3008, "duplicate enum case", item_case->line, item_case->column, "unique enum case name", item_case->name, "rename or remove one case");
+        }
+      }
     }
     for (size_t other = i + 1; other < program->enums.len; other++) {
       if (strcmp(program->enums.items[i].name, program->enums.items[other].name) == 0) {
@@ -4651,6 +5008,12 @@ bool z_check_program(const Program *program, ZDiag *diag) {
     for (size_t case_index = 0; case_index < program->choices.items[i].cases.len; case_index++) {
       Param *item_case = &program->choices.items[i].cases.items[case_index];
       if (!validate_type_form(item_case->type, diag, item_case->line, item_case->column)) return false;
+      if (!validate_type_names(program, item_case->type, NULL, NULL, false, diag, item_case->line, item_case->column)) return false;
+      for (size_t previous = 0; previous < case_index; previous++) {
+        if (strcmp(program->choices.items[i].cases.items[previous].name, item_case->name) == 0) {
+          return set_diag_detail(diag, 3008, "duplicate choice case", item_case->line, item_case->column, "unique choice case name", item_case->name, "rename or remove one case");
+        }
+      }
     }
     for (size_t other = i + 1; other < program->choices.len; other++) {
       if (strcmp(program->choices.items[i].name, program->choices.items[other].name) == 0) {
@@ -4668,6 +5031,7 @@ bool z_check_program(const Program *program, ZDiag *diag) {
     if (strcmp(fun->name, "main") == 0) main_fun = fun;
     if (fun->is_test) has_test = true;
     if (!validate_type_form(fun->return_type, diag, fun->line, fun->column)) return false;
+    if (!validate_type_names(program, fun->return_type, &fun->type_params, NULL, false, diag, fun->line, fun->column)) return false;
     if (!validate_type_param_constraints(program, fun, diag)) return false;
     if (!validate_function_error_set(fun, diag)) return false;
     if (!validate_export_c_function(fun, diag)) return false;
@@ -4690,6 +5054,10 @@ bool z_check_program(const Program *program, ZDiag *diag) {
         scope_free(&scope);
         return false;
       }
+      if (!validate_type_names(program, param->type, &fun->type_params, NULL, false, diag, param->line, param->column)) {
+        scope_free(&scope);
+        return false;
+      }
       for (size_t previous = 0; previous < param_index; previous++) {
         if (strcmp(fun->params.items[previous].name, param->name) == 0) {
           scope_free(&scope);
@@ -4705,6 +5073,7 @@ bool z_check_program(const Program *program, ZDiag *diag) {
     for (size_t alias_index = 0; alias_index < program->aliases.len; alias_index++) scope_add(&scope, program->aliases.items[alias_index].name, "Type", false);
     checking_function = fun;
     bool ok = check_stmt_vec(program, fun, &fun->body, &scope, diag);
+    if (ok) ok = check_function_has_required_return(fun, diag);
     checking_function = NULL;
     scope_free(&scope);
     if (!ok) return false;
