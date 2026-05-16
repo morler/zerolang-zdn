@@ -297,6 +297,7 @@ for (const fixture of [
   "conformance/native/pass/owned-drop-move-suppressed.0",
   "conformance/native/pass/borrow-primitives.0",
   "conformance/native/pass/borrow-field-independent-assignment.0",
+  "conformance/native/pass/receiver-return-field-origin-clears-other-field.0",
   "conformance/native/pass/borrow-return-param-field-subpath.0",
   "conformance/native/pass/borrow-unreachable-return-origin.0",
   "conformance/native/pass/borrow-unreachable-loop-return-origin.0",
@@ -2634,6 +2635,7 @@ for (const [fixture, code] of [
   ["shape-field-reference-assignment-preserves-other-origin.0", /BOR001/],
   ["shape-array-reference-index-origin.0", /BOR001/],
   ["shape-array-reference-call-origin.0", /BOR001/],
+  ["receiver-return-field-origin.0", /BOR001/],
   ["world-stream-used-as-value.0", /TYP001/],
 ]) {
   const result = await execFileAsync(zero, ["check", `conformance/native/fail/${fixture}`]).catch((error) => error);

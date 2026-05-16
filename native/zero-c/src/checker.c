@@ -1210,6 +1210,10 @@ static bool expr_is_addressable(const Expr *expr) {
 
 static bool type_is_named_generic(const char *type, const char *name);
 static bool expr_reference_provenance(const Program *program, const Expr *expr, Scope *scope, ValueProvenance *origins);
+static bool check_expr_expected(const Program *program, const Expr *expr, Scope *scope, ZDiag *diag, const char *expected);
+static const char *expr_type(const Program *program, const Expr *expr, Scope *scope);
+static bool is_int_type(const char *type);
+static void set_expr_resolved_type(const Expr *expr, const char *type);
 
 static bool borrow_expr_source_is_local_storage(const Expr *borrowed, Scope *scope, const char *root) {
   if (!scope_is_param(scope, root)) return true;
@@ -1264,6 +1268,61 @@ static bool check_borrow_conflict_at(Scope *scope, const char *root, const char 
     char actual[160];
     snprintf(actual, sizeof(actual), "%.120s already has %s borrow", place, mut > 0 ? "a mutable" : "shared");
     return set_diag_detail(diag, 3029, "borrow conflicts with an active lexical borrow", expr->line, expr->column, mut_borrow ? "unborrowed mutable lvalue" : "no active mutable borrow", actual, "end the earlier borrow's scope before borrowing again");
+  }
+  return true;
+}
+
+static bool check_place_root_available(const Expr *expr, Scope *scope, const char *root, ZDiag *diag) {
+  if (!expr || !scope || !root || !root[0]) return true;
+  const char *actual = scope_type(scope, root);
+  if (actual && strcmp(actual, "Type") == 0) {
+    char message[256];
+    snprintf(message, sizeof(message), "type name '%s' cannot be used as a runtime value", root);
+    return set_diag_detail(diag, 3005, message, expr->line, expr->column, "runtime value", "type name", "use the type name in an annotation or constructor context");
+  }
+  if (actual && type_is_owned(actual) && scope_is_moved(scope, root)) {
+    char actual_detail[160];
+    snprintf(actual_detail, sizeof(actual_detail), "%s was moved", root);
+    return set_diag_detail(diag, 3013, "owned value was already moved", expr->line, expr->column, "live owned binding", actual_detail, "stop using the old binding after transferring ownership");
+  }
+  return true;
+}
+
+static bool check_read_not_mutably_borrowed(const Expr *expr, Scope *scope, ZDiag *diag) {
+  char root[128];
+  char path[256];
+  if (!expr_binding_path(expr, root, sizeof(root), path, sizeof(path)) || !scope_has(scope, root)) return true;
+  size_t shared = 0;
+  size_t mut = 0;
+  scope_borrow_counts_for_place(scope, root, path, &shared, &mut);
+  (void)shared;
+  if (mut == 0) return true;
+  char place[200];
+  format_origin_place(place, sizeof(place), root, path);
+  char actual_detail[200];
+  snprintf(actual_detail, sizeof(actual_detail), "%.160s has an active mutable borrow", place);
+  return set_diag_detail(diag, 3029, "cannot read a value while it is mutably borrowed", expr->line, expr->column, "unborrowed value or shared borrow only", actual_detail, "end the mutable borrow's lexical scope before reading the value");
+}
+
+static bool check_place_index_exprs(const Program *program, const Expr *expr, Scope *scope, ZDiag *diag) {
+  if (!expr) return true;
+  if (expr->kind == EXPR_IDENT) {
+    if (!expr->resolved_type) set_expr_resolved_type(expr, expr_type(program, expr, scope));
+    return true;
+  }
+  if (expr->kind == EXPR_MEMBER) {
+    if (!check_place_index_exprs(program, expr->left, scope, diag)) return false;
+    if (!expr->resolved_type) set_expr_resolved_type(expr, expr_type(program, expr, scope));
+    return true;
+  }
+  if (expr->kind == EXPR_INDEX) {
+    if (!check_place_index_exprs(program, expr->left, scope, diag)) return false;
+    if (!check_expr_expected(program, expr->right, scope, diag, "usize")) return false;
+    const char *index_type = expr_type(program, expr->right, scope);
+    if (!is_int_type(index_type)) {
+      return set_diag_detail(diag, 3028, "index expression must be an integer", expr->right ? expr->right->line : expr->line, expr->right ? expr->right->column : expr->column, "integer index", index_type, "use an integer expression such as usize or a checked integer literal");
+    }
+    if (!expr->resolved_type) set_expr_resolved_type(expr, expr_type(program, expr, scope));
   }
   return true;
 }
@@ -3657,14 +3716,7 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
           snprintf(actual_detail, sizeof(actual_detail), "%s was moved", expr->text);
           return set_diag_detail(diag, 3013, "owned value was already moved", expr->line, expr->column, "live owned binding", actual_detail, "stop using the old binding after transferring ownership");
         }
-        size_t shared = 0;
-        size_t mut = 0;
-        scope_borrow_counts_for_place(scope, expr->text, NULL, &shared, &mut);
-        if (mut > 0) {
-          char actual_detail[160];
-          snprintf(actual_detail, sizeof(actual_detail), "%s has an active mutable borrow", expr->text);
-          return set_diag_detail(diag, 3029, "cannot read a value while it is mutably borrowed", expr->line, expr->column, "unborrowed value or shared borrow only", actual_detail, "end the mutable borrow's lexical scope before reading the value");
-        }
+        if (!check_read_not_mutably_borrowed(expr, scope, diag)) return false;
       }
       if (expected && type_is_named_generic(expected, "MutSpan")) {
         const char *actual = expr_type(program, expr, scope);
@@ -3697,7 +3749,13 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
           return true;
         }
       }
-      if (!check_expr(program, expr->left, scope, diag)) return false;
+      char root[128];
+      char path[256];
+      bool local_place = expr_binding_path(expr, root, sizeof(root), path, sizeof(path)) && scope_has(scope, root);
+      if (local_place) {
+        if (!check_place_root_available(expr, scope, root, diag)) return false;
+        if (!check_place_index_exprs(program, expr, scope, diag)) return false;
+      } else if (!check_expr(program, expr->left, scope, diag)) return false;
       {
         const char *left_type = expr_type(program, expr->left, scope);
         char owned_shape_type[128];
@@ -3715,6 +3773,7 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
             return set_diag_detail(diag, 3101, message, expr->line, expr->column, "declared shape field", expr->text, "rename the field or update the shape");
           }
           if (!expr->resolved_type) set_expr_resolved_type(expr, expr_type(program, expr, scope));
+          if (!check_read_not_mutably_borrowed(expr, scope, diag)) return false;
           return true;
         }
         {
@@ -3723,6 +3782,7 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
           if (type_has_generic_arg(left_type, "Maybe", &inner, &inner_len)) {
             if (strcmp(expr->text, "has") == 0 || strcmp(expr->text, "value") == 0) {
               if (!expr->resolved_type) set_expr_resolved_type(expr, expr_type(program, expr, scope));
+              if (!check_read_not_mutably_borrowed(expr, scope, diag)) return false;
               return true;
             }
             return set_diag_detail(diag, 3101, "unknown Maybe member", expr->line, expr->column, "has or value", expr->text, "use .has to test a Maybe or .value after proving it is present");
@@ -3731,18 +3791,27 @@ static bool check_expr_expected(const Program *program, const Expr *expr, Scope 
         return set_diag_detail(diag, 3027, "member access requires a shape, Maybe value, enum case, or choice case", expr->line, expr->column, "declared field or variant case", left_type, "remove the member access or use a value with declared members");
       }
     case EXPR_INDEX: {
-      if (!check_expr(program, expr->left, scope, diag)) return false;
+      char root[128];
+      char path[256];
+      bool local_place = expr_binding_path(expr, root, sizeof(root), path, sizeof(path)) && scope_has(scope, root);
+      if (local_place) {
+        if (!check_place_root_available(expr, scope, root, diag)) return false;
+        if (!check_place_index_exprs(program, expr, scope, diag)) return false;
+      } else if (!check_expr(program, expr->left, scope, diag)) return false;
       const char *base_type = expr_type(program, expr->left, scope);
       char element_type[128];
       if (!index_element_type(base_type, element_type, sizeof(element_type))) {
         return set_diag_detail(diag, 3027, "value does not support indexing", expr->line, expr->column, "[N]T, Span<T>, or String", base_type, "index fixed arrays, Span<T>, or byte-oriented String values supported by this compiler");
       }
-      if (!check_expr_expected(program, expr->right, scope, diag, "usize")) return false;
-      const char *index_type = expr_type(program, expr->right, scope);
-      if (!is_int_type(index_type)) {
-        return set_diag_detail(diag, 3028, "index expression must be an integer", expr->right ? expr->right->line : expr->line, expr->right ? expr->right->column : expr->column, "integer index", index_type, "use an integer expression such as usize or a checked integer literal");
+      if (!local_place) {
+        if (!check_expr_expected(program, expr->right, scope, diag, "usize")) return false;
+        const char *index_type = expr_type(program, expr->right, scope);
+        if (!is_int_type(index_type)) {
+          return set_diag_detail(diag, 3028, "index expression must be an integer", expr->right ? expr->right->line : expr->line, expr->right ? expr->right->column : expr->column, "integer index", index_type, "use an integer expression such as usize or a checked integer literal");
+        }
       }
       set_expr_resolved_type(expr, element_type);
+      if (!check_read_not_mutably_borrowed(expr, scope, diag)) return false;
       return true;
     }
     case EXPR_BORROW: {
@@ -4743,7 +4812,13 @@ static bool check_lvalue_target(const Program *program, const Expr *target, Scop
       return true;
     }
     case EXPR_MEMBER: {
-      if (!check_expr(program, target->left, scope, diag)) return false;
+      char root[128];
+      char path[256];
+      bool local_place = expr_binding_path(target->left, root, sizeof(root), path, sizeof(path)) && scope_has(scope, root);
+      if (local_place) {
+        if (!check_place_root_available(target->left, scope, root, diag)) return false;
+        if (!check_place_index_exprs(program, target->left, scope, diag)) return false;
+      } else if (!check_expr(program, target->left, scope, diag)) return false;
       const char *read_base_type = expr_type(program, target->left, scope);
       char base_type[128];
       snprintf(base_type, sizeof(base_type), "%s", read_base_type ? read_base_type : "Unknown");
@@ -4777,7 +4852,13 @@ static bool check_lvalue_target(const Program *program, const Expr *target, Scop
       return true;
     }
     case EXPR_INDEX: {
-      if (!check_expr(program, target->left, scope, diag)) return false;
+      char root[128];
+      char path[256];
+      bool local_place = expr_binding_path(target->left, root, sizeof(root), path, sizeof(path)) && scope_has(scope, root);
+      if (local_place) {
+        if (!check_place_root_available(target->left, scope, root, diag)) return false;
+        if (!check_place_index_exprs(program, target->left, scope, diag)) return false;
+      } else if (!check_expr(program, target->left, scope, diag)) return false;
       const char *read_base_type = expr_type(program, target->left, scope);
       char element_type[128];
       char mutref_inner[128];
@@ -4962,6 +5043,26 @@ static bool std_mem_get_value_provenance(const Program *program, const Expr *exp
   return added;
 }
 
+static bool value_provenance_add_actual_place(ValueProvenance *origins, const Expr *actual, Scope *scope, const ProvenanceEntry *summary_entry) {
+  if (!origins || !actual || !scope || !summary_entry) return false;
+  char root[128];
+  char path[256];
+  if (!expr_binding_path(actual, root, sizeof(root), path, sizeof(path)) || !scope_has(scope, root)) return false;
+  char *origin_path = origin_path_join(path, summary_entry->origin.path);
+  bool local_storage = borrow_expr_source_is_local_storage(actual, scope, root);
+  bool added = value_provenance_add_full(
+    origins,
+    root,
+    scope_binding_scope(scope, root),
+    summary_entry->mutable_borrow,
+    local_storage,
+    summary_entry->value_path,
+    origin_path
+  );
+  free(origin_path);
+  return added;
+}
+
 static bool call_result_value_provenance(const Program *program, const Expr *expr, Scope *scope, ValueProvenance *origins) {
   if (!program || !expr || expr->kind != EXPR_CALL || !expr->left || !origins) return false;
   if (std_mem_get_value_provenance(program, expr, scope, origins)) return true;
@@ -5020,21 +5121,35 @@ static bool call_result_value_provenance(const Program *program, const Expr *exp
       }
       if (!actual) continue;
       ValueProvenance actual_origins = {0};
+      char *param_type = checked_call_param_type(program, callee, expr, scope, return_type, param_index);
+      bool reference_param = type_is_named_generic(param_type, "ref") || type_is_named_generic(param_type, "mutref");
+      free(param_type);
+      const char *actual_type = expr_type(program, actual, scope);
+      bool actual_ref_like = type_is_named_generic(actual_type, "ref") || type_is_named_generic(actual_type, "mutref");
+      char actual_root[128];
+      char actual_path[256];
+      bool implicit_reference_actual = reference_param && !actual_ref_like &&
+        expr_binding_path(actual, actual_root, sizeof(actual_root), actual_path, sizeof(actual_path)) &&
+        scope_has(scope, actual_root);
       if (expr_reference_provenance_as(program, actual, scope, &actual_origins, summary_entry->mutable_borrow)) {
         ValueProvenance selected_origins = {0};
-        char *param_type = checked_call_param_type(program, callee, expr, scope, return_type, param_index);
-        bool reference_param = type_is_named_generic(param_type, "ref") || type_is_named_generic(param_type, "mutref");
-        free(param_type);
         ValueProvenance *source_origins = &actual_origins;
         if (summary_entry->origin.path) {
           if (value_provenance_add_all_under_path(&selected_origins, &actual_origins, summary_entry->origin.path)) {
             source_origins = &selected_origins;
           } else if (reference_param) {
-            if (value_provenance_add_all_as_with_origin_suffix(origins, &actual_origins, summary_entry->mutable_borrow, summary_entry->value_path, summary_entry->origin.path)) added = true;
+            if (implicit_reference_actual) {
+              if (value_provenance_add_actual_place(origins, actual, scope, summary_entry)) added = true;
+            } else if (value_provenance_add_all_as_with_origin_suffix(origins, &actual_origins, summary_entry->mutable_borrow, summary_entry->value_path, summary_entry->origin.path)) {
+              added = true;
+            }
             source_origins = NULL;
           } else {
             source_origins = NULL;
           }
+        } else if (implicit_reference_actual) {
+          if (value_provenance_add_actual_place(origins, actual, scope, summary_entry)) added = true;
+          source_origins = NULL;
         }
         if (source_origins && value_provenance_add_all_as_with_prefix(origins, source_origins, summary_entry->mutable_borrow, summary_entry->value_path)) added = true;
         value_provenance_free(&selected_origins);
@@ -5042,10 +5157,14 @@ static bool call_result_value_provenance(const Program *program, const Expr *exp
         char root[128];
         char path[256];
         if (expr_binding_path(actual, root, sizeof(root), path, sizeof(path)) && scope_has(scope, root)) {
-          char *origin_path = origin_path_join(path, summary_entry->origin.path);
-          bool local_storage = summary_entry->origin.path ? reference_place_origin_is_local_storage(scope, root) : reference_source_origin_is_local_storage(scope, root);
-          if (value_provenance_add_full(origins, root, scope_binding_scope(scope, root), summary_entry->mutable_borrow, local_storage, summary_entry->value_path, origin_path)) added = true;
-          free(origin_path);
+          if (reference_param) {
+            if (value_provenance_add_actual_place(origins, actual, scope, summary_entry)) added = true;
+          } else {
+            char *origin_path = origin_path_join(path, summary_entry->origin.path);
+            bool local_storage = summary_entry->origin.path ? reference_place_origin_is_local_storage(scope, root) : reference_source_origin_is_local_storage(scope, root);
+            if (value_provenance_add_full(origins, root, scope_binding_scope(scope, root), summary_entry->mutable_borrow, local_storage, summary_entry->value_path, origin_path)) added = true;
+            free(origin_path);
+          }
         }
       }
       value_provenance_free(&actual_origins);
