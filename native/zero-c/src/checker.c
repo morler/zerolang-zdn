@@ -1303,6 +1303,7 @@ static const char *expr_type(const Program *program, const Expr *expr, Scope *sc
 static bool is_int_type(const char *type);
 static void set_expr_resolved_type(const Expr *expr, const char *type);
 static bool place_storage_value_provenance_under_path(const Program *program, Scope *scope, const Place *place, const char *relative_path, ValueProvenance *out);
+static bool actual_storage_value_provenance_under_path(const Program *program, const Expr *actual, Scope *scope, const char *relative_path, ValueProvenance *out);
 
 static bool borrow_expr_source_is_local_storage(const Expr *borrowed, Scope *scope, const char *root) {
   if (!scope_is_param(scope, root)) return true;
@@ -5356,11 +5357,15 @@ static bool call_result_value_provenance(const Program *program, const Expr *exp
           if (value_provenance_add_all_under_path(&selected_origins, &actual_origins, summary_entry->origin.path)) {
             source_origins = &selected_origins;
           } else if (reference_param) {
-            if (implicit_reference_actual) {
+            ValueProvenance storage_origins = {0};
+            if (actual_storage_value_provenance_under_path(program, actual, scope, summary_entry->origin.path, &storage_origins)) {
+              if (value_provenance_add_all_as_with_prefix(origins, &storage_origins, summary_entry->mutable_borrow, summary_entry->value_path)) added = true;
+            } else if (implicit_reference_actual) {
               if (value_provenance_add_actual_place(origins, actual, scope, summary_entry)) added = true;
             } else if (value_provenance_add_all_as_with_origin_suffix(origins, &actual_origins, summary_entry->mutable_borrow, summary_entry->value_path, summary_entry->origin.path)) {
               added = true;
             }
+            value_provenance_free(&storage_origins);
             source_origins = NULL;
           } else {
             source_origins = NULL;

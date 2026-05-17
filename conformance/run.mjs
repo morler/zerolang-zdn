@@ -300,6 +300,7 @@ for (const fixture of [
   "conformance/native/pass/borrow-aggregate-reassignment-same-origin.0",
   "conformance/native/pass/receiver-return-field-origin-clears-other-field.0",
   "conformance/native/pass/borrow-return-param-field-subpath.0",
+  "conformance/native/pass/borrow-return-explicit-ref-field-origin.0",
   "conformance/native/pass/borrow-unreachable-return-origin.0",
   "conformance/native/pass/borrow-unreachable-loop-return-origin.0",
   "conformance/native/pass/borrow-unreachable-if-return-origin.0",
