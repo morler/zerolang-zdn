@@ -1204,6 +1204,16 @@ assert.equal(compilerDriverCheck.selfHostRouting.nativeFallback.used, false);
 assert.equal(compilerDriverCheck.selfHostDriver.owner, "compiler-zero");
 assert.equal(compilerDriverCheck.selfHostDriver.input, "examples/hello.0");
 assert.equal(compilerDriverCheck.selfHostDriver.commandResponse, 4010001);
+assert.equal(compilerDriverCheck.targetReadiness.ok, false);
+assert.equal(compilerDriverCheck.targetReadiness.languageOk, true);
+assert.equal(compilerDriverCheck.targetReadiness.buildable, false);
+assert.equal(compilerDriverCheck.targetReadiness.target, "wasm32-web");
+assert.equal(compilerDriverCheck.targetReadiness.emit, "exe");
+assert.equal(compilerDriverCheck.targetReadiness.diagnostics[0].code, "CGEN004");
+assert.equal(compilerDriverCheck.targetReadiness.diagnostics[0].backendBlocker.stage, "select");
+const defaultTargetCheck = json(["check", "--json", "examples/hello.0"]).body;
+assert.equal(defaultTargetCheck.productCliHandoff, undefined);
+assert.equal(defaultTargetCheck.targetReadiness.target, version.host);
 const compilerDriverBuildPath = join(outDir, "compiler-driver-hello");
 rmSync(`${compilerDriverBuildPath}.wasm`, { force: true });
 const compilerDriverBuild = json(["build", "--json", "--emit", "wasm", "--target", "wasm32-web", "examples/hello.0", "--out", compilerDriverBuildPath]).body;
@@ -1361,6 +1371,13 @@ assert.equal(cImport.cache.target, "wasm32-web");
 const hostLeakGraph = json(["graph", "--json", "--target", "linux-musl-x64", "conformance/c/host-leak-package"]).body;
 assert.equal(hostLeakGraph.cLibraries[0].targetValidation.status, "blocked");
 assert.equal(hostLeakGraph.cLibraries[0].linkPlan.hostDiscovery, "blocked");
+const hostLeakReadiness = json(["check", "--json", "--target", "linux-musl-x64", "conformance/c/host-leak-package"]).body;
+assert.equal(hostLeakReadiness.ok, true);
+assert.equal(hostLeakReadiness.diagnostics.length, 0);
+assert.equal(hostLeakReadiness.targetReadiness.ok, false);
+assert.equal(hostLeakReadiness.targetReadiness.buildable, false);
+assert.equal(hostLeakReadiness.targetReadiness.diagnostics[0].code, "CIMP003");
+assert.match(hostLeakReadiness.targetReadiness.diagnostics[0].help, /target sysroot|vendored/);
 const hostLeakBuild = json(["build", "--json", "--target", "linux-musl-x64", "conformance/c/host-leak-package", "--out", join(outDir, "host-leak-package")], { allowFailure: true });
 assert.notEqual(hostLeakBuild.code, 0);
 assert.equal(hostLeakBuild.body.diagnostics[0].code, "CIMP003");
@@ -1465,6 +1482,50 @@ const targetDeniedCapability = json(["check", "--json", "--target", "wasm32-web"
 assert.equal(targetDeniedCapability.diagnostics[0].code, "TAR002");
 assert.equal(targetDeniedCapability.diagnostics[0].repair.id, "choose-target-with-required-capability");
 assert.equal(targetDeniedCapability.generatedCBytes ?? 0, 0);
+const invalidCheckEmit = json(["check", "--json", "--emit", "bogus", "examples/hello.0"], { allowFailure: true });
+assert.equal(invalidCheckEmit.code, 1);
+assert.equal(invalidCheckEmit.body.ok, false);
+assert.equal(invalidCheckEmit.body.diagnostics[0].code, "BLD002");
+assert.equal(invalidCheckEmit.body.diagnostics[0].actual, "--emit bogus");
+assert.equal(invalidCheckEmit.body.targetReadiness, undefined);
+const backendBlockedReadiness = json(["check", "--json", "--emit", "obj", "--target", "linux-musl-x64", "conformance/agent-surface/fixtures/owned-drop-direct-backend-unsupported.0"]).body;
+assert.equal(backendBlockedReadiness.ok, true);
+assert.equal(backendBlockedReadiness.diagnostics.length, 0);
+assert.equal(backendBlockedReadiness.targetReadiness.ok, false);
+assert.equal(backendBlockedReadiness.targetReadiness.buildable, false);
+assert.equal(backendBlockedReadiness.targetReadiness.languageOk, true);
+assert.equal(backendBlockedReadiness.targetReadiness.emit, "obj");
+assert.equal(backendBlockedReadiness.targetReadiness.target, "linux-musl-x64");
+assert.equal(backendBlockedReadiness.targetReadiness.diagnostics[0].code, "CGEN004");
+assert.deepEqual(backendBlockedReadiness.targetReadiness.diagnostics[0].backendBlocker, {
+  target: "linux-musl-x64",
+  objectFormat: "elf",
+  backend: "zero-elf64",
+  stage: "lower",
+  unsupportedFeature: "owned<Tracked>",
+});
+const directExeBlockedReadiness = json(["check", "--json", "--emit", "exe", "--target", "linux-musl-x64", "examples/direct-call-add.0"]).body;
+assert.equal(directExeBlockedReadiness.ok, true);
+assert.equal(directExeBlockedReadiness.diagnostics.length, 0);
+assert.equal(directExeBlockedReadiness.targetReadiness.ok, false);
+assert.equal(directExeBlockedReadiness.targetReadiness.buildable, false);
+assert.equal(directExeBlockedReadiness.targetReadiness.languageOk, true);
+assert.equal(directExeBlockedReadiness.targetReadiness.emit, "exe");
+assert.equal(directExeBlockedReadiness.targetReadiness.target, "linux-musl-x64");
+assert.equal(directExeBlockedReadiness.targetReadiness.diagnostics[0].code, "CGEN004");
+assert.equal(directExeBlockedReadiness.targetReadiness.diagnostics[0].backendBlocker.stage, "emit");
+assert.match(directExeBlockedReadiness.targetReadiness.diagnostics[0].message, /main must not take parameters/);
+const machOObjectBlockedReadiness = json(["check", "--json", "--emit", "obj", "--target", "darwin-arm64", "examples/memory-package"]).body;
+assert.equal(machOObjectBlockedReadiness.ok, true);
+assert.equal(machOObjectBlockedReadiness.diagnostics.length, 0);
+assert.equal(machOObjectBlockedReadiness.targetReadiness.ok, false);
+assert.equal(machOObjectBlockedReadiness.targetReadiness.buildable, false);
+assert.equal(machOObjectBlockedReadiness.targetReadiness.languageOk, true);
+assert.equal(machOObjectBlockedReadiness.targetReadiness.emit, "obj");
+assert.equal(machOObjectBlockedReadiness.targetReadiness.target, "darwin-arm64");
+assert.equal(machOObjectBlockedReadiness.targetReadiness.diagnostics[0].code, "CGEN004");
+assert.equal(machOObjectBlockedReadiness.targetReadiness.diagnostics[0].backendBlocker.backend, "zero-macho64");
+assert.equal(machOObjectBlockedReadiness.targetReadiness.diagnostics[0].backendBlocker.stage, "emit");
 
 const routes = json(["routes", "--json", "examples/web/hello"]).body;
 assert.equal(routes.schemaVersion, 1);

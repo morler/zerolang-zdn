@@ -541,6 +541,66 @@ const agentSurfaceOwnedDropCheck = await execFileAsync(zero, ["check", "--json",
 const agentSurfaceOwnedDropCheckBody = JSON.parse(agentSurfaceOwnedDropCheck.stdout);
 assert.equal(agentSurfaceOwnedDropCheckBody.ok, true);
 
+const agentSurfaceOwnedDropReadiness = await execFileAsync(zero, [
+  "check",
+  "--json",
+  "--emit",
+  "obj",
+  "--target",
+  "linux-musl-x64",
+  "conformance/agent-surface/fixtures/owned-drop-direct-backend-unsupported.0",
+]);
+const agentSurfaceOwnedDropReadinessBody = JSON.parse(agentSurfaceOwnedDropReadiness.stdout);
+assert.equal(agentSurfaceOwnedDropReadinessBody.ok, true);
+assert.equal(agentSurfaceOwnedDropReadinessBody.diagnostics.length, 0);
+assert.equal(agentSurfaceOwnedDropReadinessBody.targetReadiness.ok, false);
+assert.equal(agentSurfaceOwnedDropReadinessBody.targetReadiness.buildable, false);
+assert.equal(agentSurfaceOwnedDropReadinessBody.targetReadiness.languageOk, true);
+assert.equal(agentSurfaceOwnedDropReadinessBody.targetReadiness.diagnostics[0].code, "CGEN004");
+assert.deepEqual(agentSurfaceOwnedDropReadinessBody.targetReadiness.diagnostics[0].backendBlocker, {
+  target: "linux-musl-x64",
+  objectFormat: "elf",
+  backend: "zero-elf64",
+  stage: "lower",
+  unsupportedFeature: "owned<Tracked>",
+});
+
+const directCallExeReadiness = await execFileAsync(zero, [
+  "check",
+  "--json",
+  "--emit",
+  "exe",
+  "--target",
+  "linux-musl-x64",
+  "examples/direct-call-add.0",
+]);
+const directCallExeReadinessBody = JSON.parse(directCallExeReadiness.stdout);
+assert.equal(directCallExeReadinessBody.ok, true);
+assert.equal(directCallExeReadinessBody.diagnostics.length, 0);
+assert.equal(directCallExeReadinessBody.targetReadiness.ok, false);
+assert.equal(directCallExeReadinessBody.targetReadiness.buildable, false);
+assert.equal(directCallExeReadinessBody.targetReadiness.diagnostics[0].code, "CGEN004");
+assert.equal(directCallExeReadinessBody.targetReadiness.diagnostics[0].backendBlocker.stage, "emit");
+assert.match(directCallExeReadinessBody.targetReadiness.diagnostics[0].message, /main must not take parameters/);
+
+const memoryPackageMachOReadiness = await execFileAsync(zero, [
+  "check",
+  "--json",
+  "--emit",
+  "obj",
+  "--target",
+  "darwin-arm64",
+  "examples/memory-package",
+]);
+const memoryPackageMachOReadinessBody = JSON.parse(memoryPackageMachOReadiness.stdout);
+assert.equal(memoryPackageMachOReadinessBody.ok, true);
+assert.equal(memoryPackageMachOReadinessBody.diagnostics.length, 0);
+assert.equal(memoryPackageMachOReadinessBody.targetReadiness.ok, false);
+assert.equal(memoryPackageMachOReadinessBody.targetReadiness.buildable, false);
+assert.equal(memoryPackageMachOReadinessBody.targetReadiness.diagnostics[0].code, "CGEN004");
+assert.equal(memoryPackageMachOReadinessBody.targetReadiness.diagnostics[0].backendBlocker.backend, "zero-macho64");
+assert.equal(memoryPackageMachOReadinessBody.targetReadiness.diagnostics[0].backendBlocker.stage, "emit");
+
 async function assertAgentSurfaceOwnedDropUnsupported(target, emit, outName, expectedPattern, expectedObjectFormat, expectedBackend, options = {}) {
   const nativeTarget = options.nativeTarget ?? true;
   const extraArgs = options.extraArgs ?? [];
@@ -2130,6 +2190,14 @@ const hostLeakGraphBody = JSON.parse(hostLeakGraph.stdout);
 assert.equal(hostLeakGraphBody.cLibraries[0].targetValidation.hostHeaderLeakage, true);
 assert.equal(hostLeakGraphBody.cLibraries[0].targetValidation.implicitHostDiscovery, true);
 assert.equal(hostLeakGraphBody.cLibraries[0].targetValidation.status, "blocked");
+const hostLeakReadiness = await execFileAsync(zero, ["check", "--json", "--target", "linux-musl-x64", "conformance/c/host-leak-package"]);
+const hostLeakReadinessBody = JSON.parse(hostLeakReadiness.stdout);
+assert.equal(hostLeakReadinessBody.ok, true);
+assert.equal(hostLeakReadinessBody.diagnostics.length, 0);
+assert.equal(hostLeakReadinessBody.targetReadiness.ok, false);
+assert.equal(hostLeakReadinessBody.targetReadiness.buildable, false);
+assert.equal(hostLeakReadinessBody.targetReadiness.diagnostics[0].code, "CIMP003");
+assert.match(hostLeakReadinessBody.targetReadiness.diagnostics[0].help, /target sysroot|vendored/);
 const hostLeakBuild = await execFileAsync(zero, ["build", "--json", "--target", "linux-musl-x64", "conformance/c/host-leak-package", "--out", ".zero/out/host-leak-package"], { encoding: "utf8" }).catch((error) => error);
 assert.notEqual(hostLeakBuild.code, 0);
 const hostLeakBuildBody = JSON.parse(hostLeakBuild.stdout);
