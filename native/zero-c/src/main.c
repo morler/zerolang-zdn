@@ -179,6 +179,14 @@ static void append_json_string(ZBuf *buf, const char *value) {
   zbuf_append_char(buf, '"');
 }
 
+static void append_json_string_or_null(ZBuf *buf, const char *value) {
+  if (value && value[0]) {
+    append_json_string(buf, value);
+  } else {
+    zbuf_append(buf, "null");
+  }
+}
+
 static void print_json_string(const char *value) {
   ZBuf buf;
   zbuf_init(&buf);
@@ -2482,6 +2490,40 @@ static const char *diag_repair_summary(int code) {
   }
 }
 
+static bool diag_has_borrow_trace(const ZDiag *diag) {
+  return diag && diag->code == 3029 && diag->borrow_trace_count > 0;
+}
+
+static void append_diag_borrow_trace_json(ZBuf *buf, const char *path, const ZDiag *diag) {
+  zbuf_append(buf, "{\"rule\":\"lexical\",\"activeBorrows\":[");
+  for (size_t i = 0; i < diag->borrow_trace_count; i++) {
+    const ZBorrowTrace *trace = &diag->borrow_traces[i];
+    if (i > 0) zbuf_append(buf, ",");
+    zbuf_append(buf, "{\"root\":");
+    append_json_string(buf, trace->root);
+    zbuf_append(buf, ",\"path\":");
+    append_json_string(buf, trace->path);
+    zbuf_append(buf, ",\"kind\":");
+    append_json_string(buf, trace->kind);
+    zbuf_append(buf, ",\"binding\":");
+    append_json_string_or_null(buf, trace->binding);
+    zbuf_append(buf, ",\"bindingDecl\":");
+    if (trace->binding_line > 0) {
+      zbuf_append(buf, "{\"path\":");
+      append_json_string(buf, trace->binding_decl_path ? trace->binding_decl_path : (diag->path ? diag->path : path));
+      zbuf_appendf(buf, ",\"line\":%d,\"column\":%d}", trace->binding_line, trace->binding_column > 0 ? trace->binding_column : 1);
+    } else {
+      zbuf_append(buf, "null");
+    }
+    zbuf_append(buf, ",\"scopeExit\":null}");
+  }
+  zbuf_append(buf, "],\"truncated\":");
+  zbuf_append(buf, diag->borrow_trace_truncated ? "true" : "false");
+  zbuf_append(buf, ",\"repair\":");
+  append_json_string(buf, diag->borrow_repair[0] ? diag->borrow_repair : diag_repair_summary(diag->code));
+  zbuf_append(buf, "}");
+}
+
 typedef struct {
   const char *code;
   const char *category;
@@ -2707,6 +2749,16 @@ static const ExplainInfo explain_infos[] = {
     "first<u8, 4>(&vec4)",
   },
   {
+    "BOR001",
+    "borrow",
+    "Active lexical borrow conflict",
+    "A read, assignment, or borrow conflicts with a reference that remains live until the end of its lexical scope.",
+    "Zero tracks borrows lexically so agents can repair by moving code or introducing inner blocks without relying on hidden lifetime inference.",
+    "End the active lexical borrow before the conflicting operation by moving the operation after the borrow scope or putting the borrow in a narrower block.",
+    "let shared = &data\nupdate(&mut data)",
+    "{\n  let shared = &data\n  let observed = shared.value\n}\nupdate(&mut data)",
+  },
+  {
     "SHM001",
     "shape-method",
     "Generic shape method cannot be specialized",
@@ -2803,6 +2855,7 @@ static void print_explain_json(const ExplainInfo *info) {
                                          strcmp(info->code, "SHM002") == 0 ? 3047 :
                                          strcmp(info->code, "RCV001") == 0 ? 3048 :
                                          strcmp(info->code, "RCV002") == 0 ? 3049 :
+                                         strcmp(info->code, "BOR001") == 0 ? 3029 :
                                          strcmp(info->code, "ERR002") == 0 ? 1002 :
                                          strcmp(info->code, "ERR003") == 0 ? 1003 :
                                          strcmp(info->code, "STD003") == 0 ? 3012 :
@@ -2870,6 +2923,10 @@ static void print_diag_json(const char *path, const ZDiag *diag) {
   zbuf_append(&buf, ", \"summary\": ");
   append_json_string(&buf, diag_repair_summary(diag->code));
   zbuf_append(&buf, "}");
+  if (diag_has_borrow_trace(diag)) {
+    zbuf_append(&buf, ",\n      \"borrowTrace\": ");
+    append_diag_borrow_trace_json(&buf, path, diag);
+  }
   zbuf_append(&buf, ",\n      \"related\": [");
   if ((diag->code == 7001 || diag->code == 7002 || diag->code == 7003 || diag->code == 1002 || diag->code == 1003 ||
        diag->code == 6001 || diag->code == 6002 ||
@@ -2907,7 +2964,12 @@ static void append_fix_plan_diagnostic(ZBuf *buf, const char *path, const ZDiag 
   append_json_string(buf, diag_repair_id(diag->code));
   zbuf_append(buf, ", \"summary\": ");
   append_json_string(buf, diag_repair_summary(diag->code));
-  zbuf_append(buf, "}}");
+  zbuf_append(buf, "}");
+  if (diag_has_borrow_trace(diag)) {
+    zbuf_append(buf, ", \"borrowTrace\": ");
+    append_diag_borrow_trace_json(buf, path, diag);
+  }
+  zbuf_append(buf, "}");
 }
 
 static void print_fix_plan_json(const char *path, const ZDiag *diag) {

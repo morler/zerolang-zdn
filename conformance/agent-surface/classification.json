@@ -61,9 +61,9 @@
     {
       "id": "borrow-lexical-lifetime",
       "path": "conformance/agent-surface/fixtures/borrow-lexical-lifetime.0",
-      "classification": "intended-behavior-with-insufficient-diagnostic-detail",
+      "classification": "intended-behavior-with-diagnostic-trace",
       "currentBehavior": "check-fail-BOR001",
-      "followUp": "Keep lexical borrow semantics unless deliberately changed, but expose active borrow root, path, binding, and repair facts in JSON diagnostics.",
+      "followUp": "Keep lexical borrow semantics and expose active borrow root, path, binding, declaration, and repair facts in JSON diagnostics.",
       "runner": "assert-diagnostic-code"
     },
     {
