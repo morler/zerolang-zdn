@@ -95,9 +95,17 @@ static int zero_runtime_curl_global_ok(void) {
   return zero_curl_global_status == CURLE_OK;
 }
 
+static int zero_curl_response_header_starts_block(const char *ptr, size_t n) {
+  return n >= 5 && ptr[0] == 'H' && ptr[1] == 'T' && ptr[2] == 'T' && ptr[3] == 'P' && ptr[4] == '/';
+}
+
 static size_t zero_curl_response_append(ZeroCurlResponseBuf *out, const char *ptr, size_t n, int is_header) {
   if (!out || !ptr) return 0;
-  if (is_header && out->body_len > 0) return n;
+  if (is_header) {
+    if (out->body_len > 0) return n;
+    /* libcurl emits separate blocks for interim and final responses; keep the final block. */
+    if (zero_curl_response_header_starts_block(ptr, n)) out->headers_len = 0;
+  }
   size_t used = out->headers_len + out->body_len;
   if (used > out->cap || n > out->cap - used) {
     out->too_large = 1;

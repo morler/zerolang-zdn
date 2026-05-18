@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
+import { createServer as createTcpServer } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
@@ -279,6 +280,33 @@ function headersSource(baseUrl) {
 `;
 }
 
+function interimHeadersSource(baseUrl) {
+  return `export c fun main() -> i32 {
+    let net = std.net.host()
+    let client = std.http.client(net)
+    let mut response: [512]u8 = [${zeroArray(512)}]
+    let result = std.http.fetch(client, std.mem.span("GET ${baseUrl}/interim\\n\\n"), response, std.time.ms(1000))
+    let reply = std.http.headerValue(response, std.mem.span("x-zero-reply"))
+    let reply_offset = std.http.headerOffset(reply)
+    let body_offset = std.http.responseBodyOffset(response)
+    if std.http.resultOk(result) &&
+        std.http.resultStatus(result) == 200 &&
+        std.http.resultBodyLen(result) == 8 &&
+        std.http.resultError(result) == std.http.errorNone() &&
+        std.http.headerFound(reply) &&
+        std.http.headerLen(reply) == 5 &&
+        response[reply_offset] == 102_u8 &&
+        response[33] == 50_u8 &&
+        response[34] == 48_u8 &&
+        response[35] == 48_u8 &&
+        response[body_offset] == 123_u8 {
+        return 46
+    }
+    return 99
+}
+`;
+}
+
 function headSource(baseUrl) {
   return `export c fun main() -> i32 {
     let net = std.net.host()
@@ -465,9 +493,32 @@ function handleRequest(request, response) {
   }
 }
 
+function createInterimHeaderServer() {
+  return createTcpServer((socket) => {
+    socket.once("data", () => {
+      socket.end([
+        "HTTP/1.1 103 Early Hints\r\n",
+        "Link: </zero.css>; rel=preload; as=style\r\n",
+        "\r\n",
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Type: application/json\r\n",
+        "X-Zero-Reply: final\r\n",
+        "Connection: close\r\n",
+        "Content-Length: 8\r\n",
+        "\r\n",
+        "{\"ok\":1}",
+      ].join(""));
+    });
+    socket.on("error", () => {});
+  });
+}
+
 const server = createHttpServer(handleRequest);
 const port = await listen(server);
 const baseUrl = `http://127.0.0.1:${port}`;
+const interimServer = createInterimHeaderServer();
+const interimPort = await listen(interimServer);
+const interimBaseUrl = `http://127.0.0.1:${interimPort}`;
 
 try {
   await buildAndRun("http-runtime-ok", okSource(baseUrl), 8);
@@ -477,6 +528,7 @@ try {
   await buildAndRun("http-runtime-post", fetchRequestSource(baseUrl, "POST", "/echo", "{\\\"ping\\\":1}", 201, 10, 42), 42);
   await buildAndRun("http-runtime-put", fetchRequestSource(baseUrl, "PUT", "/replace", "{\\\"value\\\":2}", 202, 9, 47), 47);
   await buildAndRun("http-runtime-headers", headersSource(baseUrl), 44);
+  await buildAndRun("http-runtime-interim-headers", interimHeadersSource(interimBaseUrl), 46);
   await buildAndRun("http-runtime-head", headSource(baseUrl), 45);
   await buildAndRun("http-runtime-result-json", jsonResultSource(baseUrl), 37);
   await runHttpJsonExample(baseUrl);
@@ -488,6 +540,7 @@ try {
   await buildAndRun("http-runtime-invalid-request", invalidRequestSource(baseUrl), 43);
 } finally {
   await close(server);
+  await close(interimServer);
 }
 
 if (await canRunOpenSsl()) {
