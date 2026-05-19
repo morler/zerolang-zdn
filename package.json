@@ -37,7 +37,7 @@
     "bench": "bash scripts/bench.sh",
     "bench:local": "ZERO_BENCH_MODE=local bash scripts/bench.sh",
     "agent:demo": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/agent-repair-demo.mts",
-    "evals": "turbo run eval --filter=./evals",
+    "evals": "node scripts/run-evals.mjs",
     "evals:build": "turbo run build --filter=./evals",
     "evals:test": "turbo run test --filter=./evals",
     "zls": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/zls.mts",

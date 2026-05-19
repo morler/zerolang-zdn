@@ -1,8 +1,8 @@
 import { Sandbox, type NetworkPolicy } from "@vercel/sandbox";
 import { execFile, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { evalCases, findEvalCase, type EvalCase } from "./cases.js";
@@ -102,6 +102,12 @@ const DEFAULT_MODELS = [
   "anthropic/claude-opus-4.7",
   "anthropic/claude-sonnet-4.6",
 ];
+const LOCAL_ARCHIVE_EXCLUDE_DIRS = new Set([
+  ".claude",
+  ".cursor",
+  ".vercel",
+  ".zero",
+]);
 
 const systemPrompt = [
   "You are an agent evaluating a Zero programming task.",
@@ -667,32 +673,12 @@ function summarizeToolResult(block: Record<string, unknown>) {
 
 function createSourceArchive(outDir: string) {
   const archivePath = join(outDir, "source.tar.gz");
-  const excludes = [
-    ".git",
-    ".cursor",
-    ".env",
-    ".env.*",
-    ".vercel",
-    ".zero",
-    ".next",
-    ".pnpm-store",
-    ".turbo",
-    "coverage",
-    "dist",
-    "node_modules",
-    "docs/.next",
-    "docs/out",
-    "docs/node_modules",
-    "extensions/*/node_modules",
-  ];
-  const excludeArgs = excludes.flatMap((exclude) => [
-    `--exclude=${exclude}`,
-    `--exclude=./${exclude}`,
-  ]);
+  const fileListPath = join(outDir, "source-files.txt");
+  writeFileSync(fileListPath, buildSourceArchiveFileList(outDir));
   const metadataArgs = process.platform === "darwin" ? ["--no-xattrs"] : [];
   const result = spawnSync(
     "tar",
-    [...metadataArgs, ...excludeArgs, "-czf", archivePath, "."],
+    [...metadataArgs, "--null", "-T", fileListPath, "-czf", archivePath],
     {
       cwd: repoRoot,
       encoding: "utf8",
@@ -705,6 +691,63 @@ function createSourceArchive(outDir: string) {
     );
   }
   return archivePath;
+}
+
+function buildSourceArchiveFileList(outDir: string) {
+  const result = spawnSync(
+    "git",
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `failed to list eval source files\n${result.stderr.trim()}`,
+    );
+  }
+
+  const outDirPath = repoRelativePath(outDir);
+  const entries = result.stdout
+    .split("\0")
+    .filter(Boolean)
+    .filter((entry) => existsSync(join(repoRoot, entry)))
+    .filter((entry) => !isLocalArchiveConfigPath(entry))
+    .filter((entry) => !outDirPath || !isPathAtOrBelow(entry, outDirPath));
+
+  if (entries.length === 0) {
+    throw new Error(
+      "failed to create eval source archive: no source files found",
+    );
+  }
+
+  return `${entries.join("\0")}\0`;
+}
+
+function isLocalArchiveConfigPath(path: string) {
+  const [firstSegment] = path.split("/", 1);
+  if (LOCAL_ARCHIVE_EXCLUDE_DIRS.has(firstSegment)) return true;
+  if (path === ".env") return true;
+  if (path.startsWith(".env.") && path !== ".env.example") return true;
+  return false;
+}
+
+function repoRelativePath(path: string) {
+  const relativePath = relative(repoRoot, resolve(path)).replaceAll("\\", "/");
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    relativePath.startsWith("/")
+  ) {
+    return null;
+  }
+  return relativePath;
+}
+
+function isPathAtOrBelow(path: string, parent: string) {
+  return path === parent || path.startsWith(`${parent}/`);
 }
 
 function buildSandboxSetupScript(projectDir: string) {
