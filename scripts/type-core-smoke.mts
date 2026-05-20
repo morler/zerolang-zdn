@@ -277,6 +277,28 @@ static void expect_chained_type_substitution(void) {
   z_type_arena_free(&arena);
 }
 
+static void expect_concrete_first_type_substitution(void) {
+  ZTypeArena arena;
+  z_type_arena_init(&arena);
+  ZTypeBinderDecl decls[] = {
+    {.name = "T", .kind = Z_TYPE_BINDER_TYPE, .id = 52},
+    {.name = "U", .kind = Z_TYPE_BINDER_TYPE, .id = 53},
+  };
+  ZTypeBinderScope scope = {.items = decls, .len = 2};
+  ZTypeId pattern = parse_with_binders_or_die(&arena, "Pair<Box<T>,Box<T>>", &scope);
+  ZTypeId actual = parse_with_binders_or_die(&arena, "Pair<Box<i32>,Box<U>>", &scope);
+  ZUnifyTrace trace;
+  z_unify_trace_init(&trace);
+  expect(z_type_unify(&arena, pattern, actual, &trace), "concrete-first type binder pattern did not unify");
+  ZTypeId substituted = Z_TYPE_ID_INVALID;
+  expect(z_type_substitute(&arena, actual, &trace, &substituted), "concrete-first actual substitution failed");
+  char *formatted = z_type_format(&arena, substituted);
+  expect(formatted && strcmp(formatted, "Pair<Box<i32>,Box<i32>>") == 0, "concrete-first type substitution left an unresolved binder");
+  free(formatted);
+  z_unify_trace_free(&trace);
+  z_type_arena_free(&arena);
+}
+
 static void expect_chained_static_substitution(void) {
   ZTypeArena arena;
   z_type_arena_init(&arena);
@@ -295,6 +317,62 @@ static void expect_chained_static_substitution(void) {
   char *formatted = z_type_format(&arena, substituted);
   expect(formatted && strcmp(formatted, "Pair<FixedVec<u8,4>,FixedVec<u8,4>>") == 0, "chained static substitution left an unresolved binder");
   free(formatted);
+  z_unify_trace_free(&trace);
+  z_type_arena_free(&arena);
+}
+
+static void expect_concrete_first_static_substitution(void) {
+  ZTypeArena arena;
+  z_type_arena_init(&arena);
+  ZTypeBinderDecl decls[] = {
+    {.name = "N", .kind = Z_TYPE_BINDER_STATIC, .id = 62, .static_type = "usize"},
+    {.name = "M", .kind = Z_TYPE_BINDER_STATIC, .id = 63, .static_type = "usize"},
+  };
+  ZTypeBinderScope scope = {.items = decls, .len = 2};
+  ZTypeId pattern = parse_with_binders_or_die(&arena, "Pair<FixedVec<u8,N>,FixedVec<u8,N>>", &scope);
+  ZTypeId actual = parse_with_binders_or_die(&arena, "Pair<FixedVec<u8,4>,FixedVec<u8,M>>", &scope);
+  ZUnifyTrace trace;
+  z_unify_trace_init(&trace);
+  expect(z_type_unify(&arena, pattern, actual, &trace), "concrete-first static binder pattern did not unify");
+  ZTypeId substituted = Z_TYPE_ID_INVALID;
+  expect(z_type_substitute(&arena, actual, &trace, &substituted), "concrete-first static substitution failed");
+  char *formatted = z_type_format(&arena, substituted);
+  expect(formatted && strcmp(formatted, "Pair<FixedVec<u8,4>,FixedVec<u8,4>>") == 0, "concrete-first static substitution left an unresolved binder");
+  free(formatted);
+  z_unify_trace_free(&trace);
+  z_type_arena_free(&arena);
+}
+
+static void expect_failed_unify_rolls_back_trace(void) {
+  ZTypeArena arena;
+  z_type_arena_init(&arena);
+  ZTypeBinderDecl decls[] = {
+    {.name = "T", .kind = Z_TYPE_BINDER_TYPE, .id = 70},
+    {.name = "U", .kind = Z_TYPE_BINDER_TYPE, .id = 71},
+  };
+  ZTypeBinderScope scope = {.items = decls, .len = 2};
+  ZTypeId pattern = parse_with_binders_or_die(&arena, "Pair<T,T>", &scope);
+  ZTypeId bad = parse_or_die(&arena, "Pair<i32,String>");
+  ZTypeId prior_pattern = parse_with_binders_or_die(&arena, "U", &scope);
+  ZTypeId prior_actual = parse_or_die(&arena, "u8");
+  ZUnifyTrace trace;
+  z_unify_trace_init(&trace);
+  expect(z_type_unify(&arena, prior_pattern, prior_actual, &trace), "prior trace binding did not unify");
+  expect(trace.len == 1, "prior trace binding was not committed");
+  expect(!z_type_unify(&arena, pattern, bad, &trace), "conflicting type binder pattern unified successfully");
+  expect(trace.len == 1, "failed unification did not roll back to the prior trace length");
+  const ZUnifyBinding *prior_binding = z_unify_trace_lookup(&trace, 71, Z_UNIFY_BINDING_TYPE);
+  expect(prior_binding != NULL, "failed unification dropped a prior trace binding");
+  expect(trace.message[0] != 0, "failed unification did not preserve a diagnostic message");
+
+  ZTypeId good = parse_or_die(&arena, "Pair<u8,u8>");
+  expect(z_type_unify(&arena, pattern, good, &trace), "trace was poisoned after failed unification rollback");
+  expect(trace.len == 2, "successful retry did not commit expected binding count");
+  const ZUnifyBinding *type_binding = z_unify_trace_lookup(&trace, 70, Z_UNIFY_BINDING_TYPE);
+  expect(type_binding != NULL, "successful retry did not bind T");
+  char *bound_type = z_type_format(&arena, type_binding->type);
+  expect(bound_type && strcmp(bound_type, "u8") == 0, "successful retry bound T to the wrong type");
+  free(bound_type);
   z_unify_trace_free(&trace);
   z_type_arena_free(&arena);
 }
@@ -336,6 +414,9 @@ int main(void) {
   expect_binder_alias_swap_unifies();
   expect_chained_type_substitution();
   expect_chained_static_substitution();
+  expect_concrete_first_type_substitution();
+  expect_concrete_first_static_substitution();
+  expect_failed_unify_rolls_back_trace();
 
   expect_invalid_type("");
   expect_invalid_type("Span<");

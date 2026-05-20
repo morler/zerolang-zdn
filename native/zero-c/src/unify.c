@@ -27,16 +27,26 @@ static bool unify_fail(ZUnifyTrace *trace, const char *message) {
   return false;
 }
 
+static void unify_binding_free(ZUnifyBinding *binding) {
+  if (!binding) return;
+  free(binding->name);
+  if (binding->kind == Z_UNIFY_BINDING_STATIC) z_static_value_free(&binding->static_value);
+  *binding = (ZUnifyBinding){0};
+}
+
+static void unify_trace_truncate(ZUnifyTrace *trace, size_t len) {
+  if (!trace || len > trace->len) return;
+  for (size_t i = len; i < trace->len; i++) unify_binding_free(&trace->items[i]);
+  trace->len = len;
+}
+
 void z_unify_trace_init(ZUnifyTrace *trace) {
   if (trace) *trace = (ZUnifyTrace){0};
 }
 
 void z_unify_trace_free(ZUnifyTrace *trace) {
   if (!trace) return;
-  for (size_t i = 0; i < trace->len; i++) {
-    free(trace->items[i].name);
-    if (trace->items[i].kind == Z_UNIFY_BINDING_STATIC) z_static_value_free(&trace->items[i].static_value);
-  }
+  unify_trace_truncate(trace, 0);
   free(trace->items);
   *trace = (ZUnifyTrace){0};
 }
@@ -148,11 +158,13 @@ static bool type_binding_occurs_resolved(const ZTypeArena *arena, const ZUnifyTr
   return false;
 }
 
+static bool type_unify_inner(ZTypeArena *arena, ZTypeId pattern, ZTypeId actual, ZUnifyTrace *trace);
+
 static bool bind_type(ZTypeArena *arena, ZUnifyTrace *trace, const char *name, ZTypeBinderId binder, ZTypeId type) {
   if (binder == Z_TYPE_BINDER_ID_INVALID || type == Z_TYPE_ID_INVALID) return unify_fail(trace, "invalid type binding");
   if (z_type_kind(arena, type) == Z_TYPE_NODE_BINDER && z_type_binder(arena, type) == binder) return true;
   ZUnifyBinding *existing = unify_trace_lookup_mut(trace, binder, Z_UNIFY_BINDING_TYPE);
-  if (existing) return z_type_unify(arena, existing->type, type, trace);
+  if (existing) return type_unify_inner(arena, existing->type, type, trace);
   if (binder_alias_resolves_to(arena, trace, type, binder, NULL, 0)) return true;
   if (type_binding_occurs_resolved(arena, trace, type, binder, NULL, 0)) return unify_fail(trace, "recursive type binding rejected by occurs check");
   ZUnifyBinding *binding = unify_trace_push(trace);
@@ -196,6 +208,7 @@ static bool bind_static(ZUnifyTrace *trace, const char *name, ZTypeBinderId bind
 static bool static_value_unify(const ZStaticValue *pattern, const ZStaticValue *actual, ZUnifyTrace *trace) {
   if (!pattern || !actual) return unify_fail(trace, "missing static value");
   if (pattern->kind == Z_STATIC_VALUE_BINDER) return bind_static(trace, pattern->text, pattern->binder, actual);
+  if (actual->kind == Z_STATIC_VALUE_BINDER) return bind_static(trace, actual->text, actual->binder, pattern);
   if (z_static_value_equal(pattern, actual)) return true;
   return unify_fail(trace, "static values do not unify");
 }
@@ -298,21 +311,22 @@ bool z_type_substitute(ZTypeArena *arena, ZTypeId source, const ZUnifyTrace *tra
   return type_substitute_inner(arena, source, trace, out, NULL, 0);
 }
 
-bool z_type_unify(ZTypeArena *arena, ZTypeId pattern, ZTypeId actual, ZUnifyTrace *trace) {
+static bool type_unify_inner(ZTypeArena *arena, ZTypeId pattern, ZTypeId actual, ZUnifyTrace *trace) {
   ZTypeNodeKind pattern_kind = z_type_kind(arena, pattern);
   ZTypeNodeKind actual_kind = z_type_kind(arena, actual);
   if (pattern_kind == Z_TYPE_NODE_INVALID || actual_kind == Z_TYPE_NODE_INVALID) return unify_fail(trace, "invalid type id");
   if (pattern_kind == Z_TYPE_NODE_BINDER) return bind_type(arena, trace, z_type_name(arena, pattern), z_type_binder(arena, pattern), actual);
+  if (actual_kind == Z_TYPE_NODE_BINDER) return bind_type(arena, trace, z_type_name(arena, actual), z_type_binder(arena, actual), pattern);
   if (pattern_kind != actual_kind) return unify_fail(trace, "type shapes do not match");
   if (pattern_kind == Z_TYPE_NODE_NAME) {
     return strcmp(z_type_name(arena, pattern), z_type_name(arena, actual)) == 0 ? true : unify_fail(trace, "type names do not match");
   }
   if (pattern_kind == Z_TYPE_NODE_CONST) {
-    return z_type_unify(arena, z_type_const_inner(arena, pattern), z_type_const_inner(arena, actual), trace);
+    return type_unify_inner(arena, z_type_const_inner(arena, pattern), z_type_const_inner(arena, actual), trace);
   }
   if (pattern_kind == Z_TYPE_NODE_ARRAY) {
     return static_value_unify(z_type_array_length(arena, pattern), z_type_array_length(arena, actual), trace) &&
-           z_type_unify(arena, z_type_array_element(arena, pattern), z_type_array_element(arena, actual), trace);
+           type_unify_inner(arena, z_type_array_element(arena, pattern), z_type_array_element(arena, actual), trace);
   }
   if (pattern_kind == Z_TYPE_NODE_APPLY) {
     if (strcmp(z_type_name(arena, pattern), z_type_name(arena, actual)) != 0 ||
@@ -324,7 +338,7 @@ bool z_type_unify(ZTypeArena *arena, ZTypeId pattern, ZTypeId actual, ZUnifyTrac
       const ZTypeArg *actual_arg = z_type_apply_arg(arena, actual, i);
       if (!pattern_arg || !actual_arg || pattern_arg->kind != actual_arg->kind) return unify_fail(trace, "generic type argument kinds do not match");
       if (pattern_arg->kind == Z_TYPE_ARG_TYPE) {
-        if (!z_type_unify(arena, pattern_arg->as.type, actual_arg->as.type, trace)) return false;
+        if (!type_unify_inner(arena, pattern_arg->as.type, actual_arg->as.type, trace)) return false;
       } else if (!static_value_unify(&pattern_arg->as.static_value, &actual_arg->as.static_value, trace)) {
         return false;
       }
@@ -332,4 +346,27 @@ bool z_type_unify(ZTypeArena *arena, ZTypeId pattern, ZTypeId actual, ZUnifyTrac
     return true;
   }
   return unify_fail(trace, "unsupported type node");
+}
+
+bool z_type_unify(ZTypeArena *arena, ZTypeId pattern, ZTypeId actual, ZUnifyTrace *trace) {
+  size_t start_len = trace ? trace->len : 0;
+  char prior_message[sizeof(trace->message)];
+  if (trace) {
+    memcpy(prior_message, trace->message, sizeof(prior_message));
+    trace->message[0] = 0;
+  }
+
+  bool ok = type_unify_inner(arena, pattern, actual, trace);
+  if (ok) {
+    if (trace) memcpy(trace->message, prior_message, sizeof(prior_message));
+    return true;
+  }
+
+  if (trace) {
+    char failure_message[sizeof(trace->message)];
+    snprintf(failure_message, sizeof(failure_message), "%s", trace->message[0] ? trace->message : "types do not unify");
+    unify_trace_truncate(trace, start_len);
+    snprintf(trace->message, sizeof(trace->message), "%s", failure_message);
+  }
+  return false;
 }
