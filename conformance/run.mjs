@@ -2162,6 +2162,18 @@ const genericPairSizeBody = JSON.parse(genericPairSize.stdout);
 assert(genericPairSizeBody.genericSpecializations.some((item) => item.name === "z_Pair_i32_u8_"));
 assert(genericPairSizeBody.genericSpecializations.some((item) => item.name === "z_makePair__i32__u8"));
 
+const genericInferredSize = await execFileAsync(zero, ["size", "--json", "conformance/native/pass/generic-inferred-specialized-call.0"]);
+const genericInferredSizeBody = JSON.parse(genericInferredSize.stdout);
+assert(genericInferredSizeBody.genericSpecializations.some((item) => item.name === "z_forward__i32"));
+assert(genericInferredSizeBody.genericSpecializations.some((item) => item.name === "z_identity__i32"));
+assert(!genericInferredSizeBody.genericSpecializations.some((item) => item.name === "z_identity__T"));
+
+const genericStaticForwardedSize = await execFileAsync(zero, ["size", "--json", "conformance/native/pass/generic-static-forwarded-array-specialization.0"]);
+const genericStaticForwardedSizeBody = JSON.parse(genericStaticForwardedSize.stdout);
+assert(genericStaticForwardedSizeBody.genericSpecializations.some((item) => item.name === "z_outer__4"));
+assert(genericStaticForwardedSizeBody.genericSpecializations.some((item) => item.name === "z_inner__4"));
+assert(!genericStaticForwardedSizeBody.genericSpecializations.some((item) => item.name === "z_inner__N"));
+
 const targetsJson = await execFileAsync(zero, ["targets"]);
 const targetsBody = JSON.parse(targetsJson.stdout);
 const linuxMuslTarget = targetsBody.targets.find((item) => item.name === "linux-musl-x64");
@@ -2606,6 +2618,7 @@ for (const runtimeFixture of [
 await assertDirectRuntimeRequired("conformance/native/pass/generic-function-basic.0", "generic-function-basic-required", { stdout: "generic function ok\n" });
 await assertDirectRuntimeRequired("conformance/native/pass/generic-nested-calls.0", "generic-nested-calls-required", { stdout: "generic nested calls ok\n" });
 await assertDirectRuntimeRequired("conformance/native/pass/generic-inferred-specialized-call.0", "generic-inferred-specialized-call-required", { stdout: "generic inferred specialized call ok\n" });
+await assertDirectRuntimeRequired("conformance/native/pass/generic-nested-local-specialization.0", "generic-nested-local-specialization-required", { stdout: "generic nested local specialization ok\n" });
 await assertDirectRuntimeRequired("conformance/native/pass/generic-static-array-specialization.0", "generic-static-array-specialization-required", { stdout: "generic static array specialization ok\n" });
 await assertDirectRuntimeRequired("conformance/native/pass/generic-static-forwarded-array-specialization.0", "generic-static-forwarded-array-specialization-required", { stdout: "generic static forwarded array specialization ok\n" });
 
