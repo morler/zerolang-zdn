@@ -1283,6 +1283,119 @@ const interfaceMethodStaticParamJson = await execFileAsync(zero, ["check", "--js
 const interfaceMethodStaticParamBody = JSON.parse(interfaceMethodStaticParamJson.stdout);
 assert.equal(interfaceMethodStaticParamBody.ok, true);
 
+const interfaceMethodStaticRenamedParamFixture = `${outDir}/interface-method-static-renamed-param.0`;
+await writeFile(interfaceMethodStaticRenamedParamFixture, `interface Width<T> {
+    fun width<static N: usize>(self: ref<T>, bytes: [N]u8) -> [N]u8
+}
+
+shape Bytes {
+    value: u8,
+
+    fun width<static M: usize>(self: ref<Self>, bytes: [M]u8) -> [M]u8 {
+        return bytes
+    }
+}
+
+fun readWidth<T: Width<T>>(value: ref<T>, bytes: [4]u8) -> [4]u8 {
+    return T.width<4>(value, bytes)
+}
+
+pub fun main() -> Void {
+    let bytes: Bytes = Bytes { value: 1 }
+    let output: [4]u8 = readWidth<Bytes>(&bytes, [1, 2, 3, 4])
+}
+`);
+const interfaceMethodStaticRenamedParamJson = await execFileAsync(zero, ["check", "--json", interfaceMethodStaticRenamedParamFixture]);
+const interfaceMethodStaticRenamedParamBody = JSON.parse(interfaceMethodStaticRenamedParamJson.stdout);
+assert.equal(interfaceMethodStaticRenamedParamBody.ok, true);
+
+const interfaceMethodGenericMismatchFixtures = [
+  {
+    name: "interface-method-missing-static-param",
+    code: "IFC003",
+    source: `interface Width<T> {
+    fun width<static N: usize>(self: ref<T>) -> usize
+}
+
+shape Bytes {
+    value: u8,
+
+    fun width(self: ref<Self>) -> usize {
+        return 1
+    }
+}
+
+fun readWidth<T: Width<T>>(value: ref<T>) -> usize {
+    return T.width<4>(value)
+}
+
+pub fun main() -> Void {
+    let bytes: Bytes = Bytes { value: 1 }
+    let width: usize = readWidth<Bytes>(&bytes)
+}
+`,
+  },
+  {
+    name: "interface-method-extra-static-param",
+    code: "IFC003",
+    source: `interface Width<T> {
+    fun width(self: ref<T>) -> usize
+}
+
+shape Bytes {
+    value: u8,
+
+    fun width<static N: usize>(self: ref<Self>) -> usize {
+        return N
+    }
+}
+
+fun readWidth<T: Width<T>>(value: ref<T>) -> usize {
+    return T.width(value)
+}
+
+pub fun main() -> Void {
+    let bytes: Bytes = Bytes { value: 1 }
+    let width: usize = readWidth<Bytes>(&bytes)
+}
+`,
+  },
+  {
+    name: "interface-method-static-param-type-mismatch",
+    code: "IFC005",
+    source: `interface Width<T> {
+    fun width<static N: usize>(self: ref<T>) -> usize
+}
+
+shape Bytes {
+    value: u8,
+
+    fun width<static N: Bool>(self: ref<Self>) -> usize {
+        return 1
+    }
+}
+
+fun readWidth<T: Width<T>>(value: ref<T>) -> usize {
+    return T.width<4>(value)
+}
+
+pub fun main() -> Void {
+    let bytes: Bytes = Bytes { value: 1 }
+    let width: usize = readWidth<Bytes>(&bytes)
+}
+`,
+  },
+];
+
+for (const fixtureCase of interfaceMethodGenericMismatchFixtures) {
+  const fixture = `${outDir}/${fixtureCase.name}.0`;
+  await writeFile(fixture, fixtureCase.source);
+  const interfaceMethodGenericMismatchJson = await execFileAsync(zero, ["check", "--json", fixture]).catch((error) => error);
+  assert.notEqual(interfaceMethodGenericMismatchJson.code, 0);
+  const interfaceMethodGenericMismatchBody = JSON.parse(interfaceMethodGenericMismatchJson.stdout);
+  assert.equal(interfaceMethodGenericMismatchBody.diagnostics[0].code, fixtureCase.code);
+}
+
 const staticUnsupportedTypeJson = await execFileAsync(zero, ["check", "--json", "conformance/check/fail/static-value-unsupported-type.0"]).catch((error) => error);
 assert.notEqual(staticUnsupportedTypeJson.code, 0);
 const staticUnsupportedTypeBody = JSON.parse(staticUnsupportedTypeJson.stdout);

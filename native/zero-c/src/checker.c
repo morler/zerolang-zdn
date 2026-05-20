@@ -2417,6 +2417,52 @@ static bool normalize_static_bindings(const Program *program, const Function *fu
   return true;
 }
 
+static bool validate_interface_method_generic_params(const Program *program, const InterfaceDecl *interface, const Function *required, const Function *method, ZDiag *diag) {
+  if (!required || !method) return true;
+  if (method->type_params.len != required->type_params.len) {
+    char expected[128];
+    char actual[128];
+    snprintf(expected, sizeof(expected), "%zu generic parameter(s)", required->type_params.len);
+    snprintf(actual, sizeof(actual), "%zu generic parameter(s)", method->type_params.len);
+    char message[256];
+    snprintf(message, sizeof(message), "interface method '%s.%s' generic parameter count does not match shape method", interface ? interface->name : "interface", required->name ? required->name : "method");
+    return set_diag_detail(diag, 3040, message, method->line, method->column, expected, actual, "update the shape method generic parameter list to match the interface method");
+  }
+  for (size_t i = 0; i < required->type_params.len; i++) {
+    const Param *expected_param = &required->type_params.items[i];
+    const Param *actual_param = &method->type_params.items[i];
+    if (expected_param->is_static != actual_param->is_static) {
+      char message[256];
+      snprintf(message, sizeof(message), "interface method '%s.%s' generic parameter %zu kind does not match shape method", interface ? interface->name : "interface", required->name ? required->name : "method", i + 1);
+      return set_diag_detail(diag, 3042, message, actual_param->line, actual_param->column, expected_param->is_static ? "static generic parameter" : "type generic parameter", actual_param->is_static ? "static generic parameter" : "type generic parameter", "use matching generic parameter kinds in the shape method implementation");
+    }
+    if (!expected_param->is_static) continue;
+    const char *expected_type = expected_param->type ? expected_param->type : "usize";
+    const char *actual_type = actual_param->type ? actual_param->type : "usize";
+    if (!types_compatible(program, expected_type, actual_type)) {
+      char message[256];
+      snprintf(message, sizeof(message), "interface method '%s.%s' static generic parameter %zu type does not match shape method", interface ? interface->name : "interface", required->name ? required->name : "method", i + 1);
+      return set_diag_detail(diag, 3042, message, actual_param->line, actual_param->column, expected_type, actual_type, "use the same static value parameter type as the interface method");
+    }
+  }
+  return true;
+}
+
+static char *type_substitute_interface_method_signature(const char *type, GenericBinding *interface_bindings, size_t interface_binding_len, const Function *required, const Function *method) {
+  char *with_interface = type_substitute_generic(type, interface_bindings, interface_binding_len);
+  if (!required || !method || required->type_params.len == 0) return with_interface;
+  GenericBinding *method_bindings = z_checked_calloc(required->type_params.len, sizeof(GenericBinding));
+  for (size_t i = 0; i < required->type_params.len; i++) {
+    method_bindings[i].name = required->type_params.items[i].name;
+    method_bindings[i].type = z_strdup(method->type_params.items[i].name);
+  }
+  char *substituted = type_substitute_generic(with_interface, method_bindings, required->type_params.len);
+  free(with_interface);
+  generic_bindings_free(method_bindings, required->type_params.len);
+  free(method_bindings);
+  return substituted;
+}
+
 static char *type_substitute_generic(const char *type, GenericBinding *bindings, size_t binding_len) {
   if (!type) return z_strdup("Unknown");
   const char *bound = generic_binding_lookup(bindings, binding_len, type);
@@ -2640,6 +2686,12 @@ static bool validate_generic_constraints(const Program *program, const Function 
         free(interface_bindings);
         return set_diag_detail(diag, 3039, message, call->line, call->column, "matching static method on the concrete shape", "method not found", "add the required static method with the interface signature");
       }
+      if (!validate_interface_method_generic_params(program, interface, required, method, diag)) {
+        free_type_arg_list(constraint_args, constraint_arg_len);
+        generic_bindings_free(interface_bindings, interface->type_params.len);
+        free(interface_bindings);
+        return false;
+      }
       if (method->params.len != required->params.len) {
         char message[256];
         snprintf(message, sizeof(message), "interface method '%s.%s' parameter count does not match shape method", interface->name, required->name);
@@ -2649,7 +2701,7 @@ static bool validate_generic_constraints(const Program *program, const Function 
         return set_diag_detail(diag, 3040, message, method->line, method->column, "same parameter count as interface", "different parameter count", "update the shape method signature to match the interface");
       }
       for (size_t i = 0; i < required->params.len; i++) {
-        char *expected = type_substitute_generic(required->params.items[i].type, interface_bindings, interface->type_params.len);
+        char *expected = type_substitute_interface_method_signature(required->params.items[i].type, interface_bindings, interface->type_params.len, required, method);
         char *actual = type_substitute_generic(method->params.items[i].type, &self_binding, 1);
         bool ok = types_compatible(program, expected, actual);
         if (!ok) {
@@ -2666,7 +2718,7 @@ static bool validate_generic_constraints(const Program *program, const Function 
         free(expected);
         free(actual);
       }
-      char *expected_return = type_substitute_generic(required->return_type, interface_bindings, interface->type_params.len);
+      char *expected_return = type_substitute_interface_method_signature(required->return_type, interface_bindings, interface->type_params.len, required, method);
       char *actual_return = type_substitute_generic(method->return_type, &self_binding, 1);
       if (!types_compatible(program, expected_return, actual_return)) {
         char message[256];
