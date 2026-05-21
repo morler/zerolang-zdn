@@ -745,6 +745,41 @@ static void rejects_trailing_fixed_row_tokens(void) {
   );
 }
 
+static void rejects_export_c_on_non_function_rows(void) {
+  expect_row_parse_failure(
+    "export c use std.mem\n",
+    "export c"
+  );
+  expect_row_parse_failure(
+    "export c const answer i32 42\n"
+    "pub fn main Void\n",
+    "export c"
+  );
+  expect_row_parse_failure(
+    "export c type Point\n"
+    "  x i32\n"
+    "pub fn main Void\n",
+    "export c"
+  );
+  expect_row_parse_failure(
+    "export c enum Mode\n"
+    "  off\n"
+    "pub fn main Void\n",
+    "export c"
+  );
+  expect_row_parse_failure(
+    "export c choice Result\n"
+    "  ok i32\n"
+    "pub fn main Void\n",
+    "export c"
+  );
+  expect_row_parse_failure(
+    "export c test \"adds\"\n"
+    "  expect true\n",
+    "export c"
+  );
+}
+
 int main(void) {
   tokenizes_layout_and_trivia();
   tracks_nested_dedents();
@@ -770,6 +805,7 @@ int main(void) {
   rejects_empty_use_import();
   rejects_unexpected_child_rows();
   rejects_trailing_fixed_row_tokens();
+  rejects_export_c_on_non_function_rows();
   printf("row syntax smoke ok\n");
   return 0;
 }

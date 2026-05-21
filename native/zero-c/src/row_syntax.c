@@ -1427,14 +1427,20 @@ Program z_parse_row(const ZRowTokenVec *tokens, const ZRowTree *tree, ZDiag *dia
     size_t end = node->first_token + node->token_count;
     bool is_public = false;
     bool export_c = false;
+    const ZRowToken *export_token = NULL;
     if (row_token_text_at(tokens, pos, end, "pub")) {
       is_public = true;
       pos++;
     }
     if (row_token_text_at(tokens, pos, end, "export")) {
+      export_token = &tokens->items[pos];
       export_c = true;
       pos++;
       if (row_token_text_at(tokens, pos, end, "c")) pos++;
+    }
+    if (export_c && !row_token_text_at(tokens, pos, end, "fn")) {
+      row_diag(diag, export_token ? export_token->line : node->line, export_token ? export_token->column : node->column, 1, "export c only applies to function declarations", "fn declaration", "remove export c or change the row to a function declaration");
+      return program;
     }
 
     if (row_token_text_at(tokens, pos, end, "use")) {
