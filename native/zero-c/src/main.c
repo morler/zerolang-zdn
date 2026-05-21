@@ -383,6 +383,22 @@ static const char *token_kind_name(TokenKind kind) {
   return "unknown";
 }
 
+static const char *row_token_kind_name(ZRowTokenKind kind) {
+  switch (kind) {
+    case Z_ROW_TOKEN_WORD: return "word";
+    case Z_ROW_TOKEN_STRING: return "string";
+    case Z_ROW_TOKEN_CHAR: return "char";
+    case Z_ROW_TOKEN_NUMBER: return "number";
+    case Z_ROW_TOKEN_SYMBOL: return "symbol";
+    case Z_ROW_TOKEN_COMMENT: return "comment";
+    case Z_ROW_TOKEN_NEWLINE: return "newline";
+    case Z_ROW_TOKEN_INDENT: return "indent";
+    case Z_ROW_TOKEN_DEDENT: return "dedent";
+    case Z_ROW_TOKEN_EOF: return "eof";
+  }
+  return "unknown";
+}
+
 static void append_tokens_json(ZBuf *buf, const char *source_file, const TokenVec *tokens) {
   zbuf_append(buf, "{\n  \"schemaVersion\": 1,\n  \"sourceFile\": ");
   append_json_string(buf, source_file);
@@ -391,6 +407,29 @@ static void append_tokens_json(ZBuf *buf, const char *source_file, const TokenVe
     const Token *token = &tokens->items[i];
     zbuf_append(buf, "    {\"kind\": ");
     append_json_string(buf, token_kind_name(token->kind));
+    zbuf_append(buf, ", \"text\": ");
+    append_json_string(buf, token->text);
+    zbuf_appendf(
+      buf,
+      ", \"line\": %d, \"column\": %d, \"offset\": %zu, \"length\": %zu}%s\n",
+      token->line,
+      token->column,
+      token->offset,
+      token->length,
+      i + 1 < tokens->len ? "," : ""
+    );
+  }
+  zbuf_append(buf, "  ]\n}\n");
+}
+
+static void append_row_tokens_json(ZBuf *buf, const char *source_file, const ZRowTokenVec *tokens) {
+  zbuf_append(buf, "{\n  \"schemaVersion\": 1,\n  \"sourceFile\": ");
+  append_json_string(buf, source_file);
+  zbuf_append(buf, ",\n  \"syntax\": \"row\",\n  \"tokens\": [\n");
+  for (size_t i = 0; tokens && i < tokens->len; i++) {
+    const ZRowToken *token = &tokens->items[i];
+    zbuf_append(buf, "    {\"kind\": ");
+    append_json_string(buf, row_token_kind_name(token->kind));
     zbuf_append(buf, ", \"text\": ");
     append_json_string(buf, token->text);
     zbuf_appendf(
@@ -3329,23 +3368,23 @@ static void print_help(void) {
   printf("  zero --version [--json]\n");
   printf("  zero skills [list|get] [--json]\n");
   printf("  zero new cli|lib|package <name>\n");
-  printf("  zero check <file.0|project|zero.json>\n");
-  printf("  zero test <file.0|project|zero.json>\n");
-  printf("  zero fmt <file.0|project|zero.json>\n");
-  printf("  zero build [--json] [--emit exe|obj] [--target <target>] [--profile debug|dev|release-fast|release-small|tiny|audit] [--release <profile>] [--out <file>] <file.0|project|zero.json>\n");
-  printf("  zero run [--target <target>] [--profile debug|dev|release-fast|release-small|tiny|audit] [--release <profile>] [--out <file>] <file.0|project|zero.json> [-- args...]\n");
-  printf("  zero ship [--json] [--target <target>] [--profile release-small|tiny|audit] [--out <file>] <file.0|project|zero.json>\n");
-  printf("  zero tokens --json <file.0|project|zero.json>\n");
-  printf("  zero parse --json <file.0|project|zero.json>\n");
-  printf("  zero graph [--json] <file.0|project|zero.json>\n");
-  printf("  zero doc [--json] <file.0|project|zero.json>\n");
-  printf("  zero size [--json] [--out <artifact>] <file.0|project|zero.json>\n");
-  printf("  zero mem [--json] [--target <target>] <file.0|project|zero.json>\n");
-  printf("  zero dev [--json] [--trace] <file.0|project|zero.json>\n");
-  printf("  zero time --json <file.0|project|zero.json>\n");
-  printf("  zero abi check|dump [--json] [--target <target>] <file.0|project|zero.json>\n");
+  printf("  zero check <file.0|file.row|project|zero.json>\n");
+  printf("  zero test <file.0|file.row|project|zero.json>\n");
+  printf("  zero fmt <file.0|file.row|project|zero.json>\n");
+  printf("  zero build [--json] [--emit exe|obj] [--target <target>] [--profile debug|dev|release-fast|release-small|tiny|audit] [--release <profile>] [--out <file>] <file.0|file.row|project|zero.json>\n");
+  printf("  zero run [--target <target>] [--profile debug|dev|release-fast|release-small|tiny|audit] [--release <profile>] [--out <file>] <file.0|file.row|project|zero.json> [-- args...]\n");
+  printf("  zero ship [--json] [--target <target>] [--profile release-small|tiny|audit] [--out <file>] <file.0|file.row|project|zero.json>\n");
+  printf("  zero tokens --json <file.0|file.row|project|zero.json>\n");
+  printf("  zero parse --json <file.0|file.row|project|zero.json>\n");
+  printf("  zero graph [--json] <file.0|file.row|project|zero.json>\n");
+  printf("  zero doc [--json] <file.0|file.row|project|zero.json>\n");
+  printf("  zero size [--json] [--out <artifact>] <file.0|file.row|project|zero.json>\n");
+  printf("  zero mem [--json] [--target <target>] <file.0|file.row|project|zero.json>\n");
+  printf("  zero dev [--json] [--trace] <file.0|file.row|project|zero.json>\n");
+  printf("  zero time --json <file.0|file.row|project|zero.json>\n");
+  printf("  zero abi check|dump [--json] [--target <target>] <file.0|file.row|project|zero.json>\n");
   printf("  zero explain [--json] <code>\n");
-  printf("  zero fix --plan --json <file.0|project|zero.json>\n");
+  printf("  zero fix --plan --json <file.0|file.row|project|zero.json>\n");
   printf("  zero doctor [--json]\n");
   printf("  zero clean [--all]\n");
   printf("  zero targets\n");
@@ -3382,7 +3421,7 @@ static void print_command_help(const char *command) {
     printf("Flags:\n");
     printf("  --all    remove broader .zero generated state while preserving .zero/bin\n");
   } else if (strcmp(command, "check") == 0) {
-    printf("Usage: zero check [--json] [--target <target>] [--emit exe|obj] <file.0|project|zero.json>\n\n");
+    printf("Usage: zero check [--json] [--target <target>] [--emit exe|obj] <file.0|file.row|project|zero.json>\n\n");
     printf("Parse and typecheck Zero source without emitting artifacts. JSON output includes target readiness for the selected emit kind.\n");
   } else if (strcmp(command, "build") == 0) {
     printf("Usage: zero build [--json] [--emit exe|obj] [--target <target>] [--profile debug|dev|release-fast|release-small|tiny|audit] [--release <profile>] [--out <file>] <input>\n\n");
@@ -3397,46 +3436,46 @@ static void print_command_help(const char *command) {
     printf("Produce a deterministic release preview with a direct binary, stripped binary copy, checksum, archive manifest, debug-symbol metadata, size report, and SBOM placeholder.\n\n");
     printf("Example: zero ship --target linux-musl-x64 examples/hello.0 --out .zero/ship/hello\n");
   } else if (strcmp(command, "test") == 0) {
-    printf("Usage: zero test [--json] [--filter <name>] [--target <target>] [--cc <path>] [--out <file>] <file.0|project|zero.json>\n\n");
+    printf("Usage: zero test [--json] [--filter <name>] [--target <target>] [--cc <path>] [--out <file>] <file.0|file.row|project|zero.json>\n\n");
     printf("Build and run inline `test` blocks.\n");
   } else if (strcmp(command, "fmt") == 0) {
-    printf("Usage: zero fmt [--check] <file.0|project|zero.json>\n\n");
-    printf("Print deterministic bootstrap formatting for current Zero syntax.\n");
+    printf("Usage: zero fmt [--check] <file.0|file.row|project|zero.json>\n\n");
+    printf("Print deterministic bootstrap formatting for Zero source.\n");
   } else if (strcmp(command, "targets") == 0) {
     printf("Usage: zero targets\n\n");
     printf("Print supported target facts as JSON.\n");
   } else if (strcmp(command, "tokens") == 0) {
-    printf("Usage: zero tokens --json <file.0|project|zero.json>\n\n");
-    printf("Emit bootstrap lexer token JSON for oracle comparisons.\n");
+    printf("Usage: zero tokens --json <file.0|file.row|project|zero.json>\n\n");
+    printf("Emit source token JSON for oracle comparisons.\n");
   } else if (strcmp(command, "parse") == 0) {
-    printf("Usage: zero parse --json <file.0|project|zero.json>\n\n");
-    printf("Emit normalized bootstrap parse JSON for oracle comparisons.\n");
+    printf("Usage: zero parse --json <file.0|file.row|project|zero.json>\n\n");
+    printf("Emit normalized source parse JSON for oracle comparisons.\n");
   } else if (strcmp(command, "abi") == 0) {
-    printf("Usage: zero abi check|dump [--json] [--target <target>] <file.0|project|zero.json>\n\n");
+    printf("Usage: zero abi check|dump [--json] [--target <target>] <file.0|file.row|project|zero.json>\n\n");
     printf("Check ABI-safe declarations or dump target-aware source layout facts.\n");
   } else if (strcmp(command, "graph") == 0) {
-    printf("Usage: zero graph [--json] [--target <target>] <file.0|project|zero.json>\n\n");
+    printf("Usage: zero graph [--json] [--target <target>] <file.0|file.row|project|zero.json>\n\n");
     printf("Inspect modules, symbols, capabilities, static metadata, and stdlib helpers.\n");
   } else if (strcmp(command, "doc") == 0) {
-    printf("Usage: zero doc [--json] [--target <target>] <file.0|project|zero.json>\n\n");
+    printf("Usage: zero doc [--json] [--target <target>] <file.0|file.row|project|zero.json>\n\n");
     printf("Emit package API documentation facts without emitting artifacts.\n");
   } else if (strcmp(command, "size") == 0) {
-    printf("Usage: zero size [--json] [--target <target>] [--profile debug|dev|release-fast|release-small|tiny|audit] [--release <profile>] [--out <artifact>] <file.0|project|zero.json>\n\n");
+    printf("Usage: zero size [--json] [--target <target>] [--profile debug|dev|release-fast|release-small|tiny|audit] [--release <profile>] [--out <artifact>] <file.0|file.row|project|zero.json>\n\n");
     printf("Report direct IR size, optional artifact bytes, capabilities, and stdlib helper metadata.\n");
   } else if (strcmp(command, "mem") == 0) {
-    printf("Usage: zero mem [--json] [--target <target>] <file.0|project|zero.json>\n\n");
+    printf("Usage: zero mem [--json] [--target <target>] <file.0|file.row|project|zero.json>\n\n");
     printf("Report direct stack, static, heap, buffer, and runtime memory facts.\n");
   } else if (strcmp(command, "dev") == 0) {
-    printf("Usage: zero dev [--json] [--trace] [--target <target>] <file.0|project|zero.json>\n\n");
+    printf("Usage: zero dev [--json] [--trace] [--target <target>] <file.0|file.row|project|zero.json>\n\n");
     printf("Emit a direct incremental watch plan, interface fingerprints, and affected-test summary.\n");
   } else if (strcmp(command, "time") == 0) {
-    printf("Usage: zero time --json [--target <target>] <file.0|project|zero.json>\n\n");
+    printf("Usage: zero time --json [--target <target>] <file.0|file.row|project|zero.json>\n\n");
     printf("Emit compiler phase, cache, and invalidation timing facts.\n");
   } else if (strcmp(command, "explain") == 0) {
     printf("Usage: zero explain [--json] <diagnostic-code>\n\n");
     printf("Explain a diagnostic and its repair metadata.\n");
   } else if (strcmp(command, "fix") == 0) {
-    printf("Usage: zero fix (--plan|--patch|--apply) --json [--target <target>] <file.0|project|zero.json>\n\n");
+    printf("Usage: zero fix (--plan|--patch|--apply) --json [--target <target>] <file.0|file.row|project|zero.json>\n\n");
     printf("Print repair plans, reviewable patches, or apply behavior-preserving edits.\n");
   } else if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0) {
     printf("Usage: zero --version [--json]\n\n");
@@ -3615,9 +3654,159 @@ static const char *emit_kind_name(EmitKind emit) {
 }
 
 static long long now_ms(void);
+static bool has_suffix(const char *path, const char *suffix);
+
+static bool is_row_source_path(const char *path) {
+  return path && has_suffix(path, ".row");
+}
+
+static void direct_input_push_string(char ***items, size_t *len, const char *value) {
+  *items = z_checked_reallocarray(*items, *len + 1, sizeof(char *));
+  (*items)[(*len)++] = z_strdup(value ? value : "");
+}
+
+static void direct_input_push_source_line(SourceInput *input, const char *path, int line) {
+  input->source_line_paths = z_checked_reallocarray(input->source_line_paths, input->source_line_count + 1, sizeof(char *));
+  input->source_line_numbers = z_checked_reallocarray(input->source_line_numbers, input->source_line_count + 1, sizeof(int));
+  input->source_line_paths[input->source_line_count] = z_strdup(path ? path : "");
+  input->source_line_numbers[input->source_line_count] = line > 0 ? line : 1;
+  input->source_line_count++;
+}
+
+static char *direct_module_name_from_path(const char *path) {
+  const char *name = path ? strrchr(path, '/') : NULL;
+  name = name ? name + 1 : (path ? path : "main");
+  size_t len = strlen(name);
+  if (len > 4 && strcmp(name + len - 4, ".row") == 0) len -= 4;
+  else if (len > 2 && strcmp(name + len - 2, ".0") == 0) len -= 2;
+  return len > 0 ? z_strndup(name, len) : z_strdup("main");
+}
+
+static void direct_input_add_source_metadata(SourceInput *input) {
+  direct_input_push_string(&input->source_files, &input->source_file_count, input->source_file);
+  char *module_name = direct_module_name_from_path(input->source_file);
+  input->module_names = z_checked_reallocarray(input->module_names, input->module_count + 1, sizeof(char *));
+  input->module_paths = z_checked_reallocarray(input->module_paths, input->module_count + 1, sizeof(char *));
+  input->module_names[input->module_count] = z_strdup(module_name);
+  input->module_paths[input->module_count] = z_strdup(input->source_file);
+  input->module_count++;
+  free(module_name);
+
+  int line = 1;
+  direct_input_push_source_line(input, input->source_file, line);
+  for (const char *cursor = input->source ? input->source : ""; *cursor; cursor++) {
+    if (*cursor == '\n') direct_input_push_source_line(input, input->source_file, ++line);
+  }
+}
+
+static bool load_direct_row_source(const char *path, SourceInput *input, ZDiag *diag) {
+  input->source_file = z_strdup(path);
+  input->source = z_read_file(path, diag);
+  if (!input->source) return false;
+  direct_input_add_source_metadata(input);
+  return true;
+}
+
+static bool parse_row_source_text(const char *source, Program *program, ZDiag *diag) {
+  ZRowTokenVec tokens = z_row_tokenize(source, diag);
+  if (diag->code != 0) {
+    z_free_row_tokens(&tokens);
+    return false;
+  }
+  ZRowTree tree = {0};
+  if (!z_row_parse_layout(&tokens, &tree, diag)) {
+    z_free_row_tree(&tree);
+    z_free_row_tokens(&tokens);
+    return false;
+  }
+  *program = z_parse_row(&tokens, &tree, diag);
+  z_free_row_tree(&tree);
+  z_free_row_tokens(&tokens);
+  return diag->code == 0;
+}
+
+static char *format_row_source_text(const char *source, ZDiag *diag) {
+  ZRowTokenVec tokens = z_row_tokenize(source, diag);
+  if (diag->code != 0) {
+    z_free_row_tokens(&tokens);
+    return NULL;
+  }
+  ZRowTree tree = {0};
+  if (!z_row_parse_layout(&tokens, &tree, diag)) {
+    z_free_row_tree(&tree);
+    z_free_row_tokens(&tokens);
+    return NULL;
+  }
+  char *formatted = z_format_row_layout(&tokens, &tree);
+  z_free_row_tree(&tree);
+  z_free_row_tokens(&tokens);
+  return formatted;
+}
+
+static void direct_input_push_symbol(SourceInput *input, const char *module, const char *kind, const char *name, bool is_public) {
+  input->symbol_names = z_checked_reallocarray(input->symbol_names, input->symbol_count + 1, sizeof(char *));
+  input->symbol_modules = z_checked_reallocarray(input->symbol_modules, input->symbol_count + 1, sizeof(char *));
+  input->symbol_kinds = z_checked_reallocarray(input->symbol_kinds, input->symbol_count + 1, sizeof(char *));
+  input->symbol_public = z_checked_reallocarray(input->symbol_public, input->symbol_count + 1, sizeof(bool));
+  input->symbol_names[input->symbol_count] = z_strdup(name ? name : "");
+  input->symbol_modules[input->symbol_count] = z_strdup(module ? module : "");
+  input->symbol_kinds[input->symbol_count] = z_strdup(kind ? kind : "");
+  input->symbol_public[input->symbol_count++] = is_public;
+}
+
+static void direct_input_add_program_symbols(SourceInput *input, const Program *program) {
+  const char *module = input && input->module_count > 0 ? input->module_names[0] : "main";
+  for (size_t i = 0; program && i < program->consts.len; i++) {
+    direct_input_push_symbol(input, module, "const", program->consts.items[i].name, program->consts.items[i].is_public);
+  }
+  for (size_t i = 0; program && i < program->aliases.len; i++) {
+    direct_input_push_symbol(input, module, "alias", program->aliases.items[i].name, program->aliases.items[i].is_public);
+  }
+  for (size_t i = 0; program && i < program->interfaces.len; i++) {
+    direct_input_push_symbol(input, module, "interface", program->interfaces.items[i].name, program->interfaces.items[i].is_public);
+  }
+  for (size_t i = 0; program && i < program->shapes.len; i++) {
+    direct_input_push_symbol(input, module, "shape", program->shapes.items[i].name, program->shapes.items[i].is_public);
+  }
+  for (size_t i = 0; program && i < program->enums.len; i++) {
+    direct_input_push_symbol(input, module, "enum", program->enums.items[i].name, false);
+  }
+  for (size_t i = 0; program && i < program->choices.len; i++) {
+    direct_input_push_symbol(input, module, "choice", program->choices.items[i].name, false);
+  }
+  for (size_t i = 0; program && i < program->functions.len; i++) {
+    direct_input_push_symbol(input, module, "function", program->functions.items[i].name, program->functions.items[i].is_public);
+  }
+}
 
 static bool compile_input(const char *input_path, const ZTargetInfo *target, SourceInput *input, Program *program, ZDiag *diag) {
   long long phase_started = now_ms();
+  if (is_row_source_path(input_path)) {
+    if (!load_direct_row_source(input_path, input, diag)) return false;
+    input->resolve_ms = now_ms() - phase_started;
+    diag->path = input->source_file;
+    phase_started = now_ms();
+    if (!parse_row_source_text(input->source, program, diag)) {
+      z_map_source_diag(input, diag);
+      return false;
+    }
+    input->parse_ms = now_ms() - phase_started;
+    direct_input_add_program_symbols(input, program);
+    input->interface_ms = input->resolve_ms;
+    input->parse_cache_hit = compiler_cache_touch("parse-tree", compile_cache_key(input, NULL, NULL, "parse-tree"));
+    input->interface_cache_hit = compiler_cache_touch("interface", source_interface_hash(input));
+    input->check_cache_hit = compiler_cache_touch("checked-body", compile_cache_key(input, target, NULL, "checked-body"));
+    input->specialization_cache_hit = compiler_cache_touch("specialization", compile_cache_key(input, target, "release", "specialization"));
+    z_set_check_target(target);
+    phase_started = now_ms();
+    if (!z_check_program(program, diag)) {
+      z_map_source_diag(input, diag);
+      return false;
+    }
+    input->check_ms = now_ms() - phase_started;
+    return true;
+  }
+
   if (!z_resolve_source(input_path, input, diag)) return false;
   input->resolve_ms = now_ms() - phase_started;
   input->interface_ms = input->resolve_ms;
@@ -9133,7 +9322,14 @@ int main(int argc, char **argv) {
 
   if (strcmp(command.command, "fmt") == 0) {
     SourceInput fmt_input = {0};
-    if (has_suffix(command.input, ".0")) {
+    bool row_source = is_row_source_path(command.input);
+    if (row_source) {
+      if (!load_direct_row_source(command.input, &fmt_input, &diag)) {
+        if (command.json) print_diag_json(command.input, &diag);
+        else print_diag(diag.path ? diag.path : command.input, &diag);
+        return 1;
+      }
+    } else if (has_suffix(command.input, ".0")) {
       fmt_input.source_file = z_strdup(command.input);
       fmt_input.source = z_read_file(command.input, &diag);
     } else if (!z_resolve_source(command.input, &fmt_input, &diag)) {
@@ -9147,7 +9343,16 @@ int main(int argc, char **argv) {
       z_free_source(&fmt_input);
       return 1;
     }
-    char *formatted = format_source_minimal(fmt_input.source);
+    diag.path = fmt_input.source_file;
+    char *formatted = row_source ? format_row_source_text(fmt_input.source, &diag) : format_source_minimal(fmt_input.source);
+    if (!formatted || diag.code != 0) {
+      z_map_source_diag(&fmt_input, &diag);
+      if (command.json) print_diag_json(diag.path ? diag.path : command.input, &diag);
+      else print_diag(diag.path ? diag.path : command.input, &diag);
+      free(formatted);
+      z_free_source(&fmt_input);
+      return 1;
+    }
     if (command.fmt_check) {
       bool matches = strcmp(formatted, fmt_input.source) == 0;
       if (matches) {
@@ -9167,7 +9372,14 @@ int main(int argc, char **argv) {
 
   if (strcmp(command.command, "tokens") == 0) {
     SourceInput token_input = {0};
-    if (has_suffix(command.input, ".0")) {
+    bool row_source = is_row_source_path(command.input);
+    if (row_source) {
+      if (!load_direct_row_source(command.input, &token_input, &diag)) {
+        if (command.json) print_diag_json(command.input, &diag);
+        else print_diag(diag.path ? diag.path : command.input, &diag);
+        return 1;
+      }
+    } else if (has_suffix(command.input, ".0")) {
       token_input.source_file = z_strdup(command.input);
       token_input.source = z_read_file(command.input, &diag);
     } else if (!z_resolve_source(command.input, &token_input, &diag)) {
@@ -9182,6 +9394,31 @@ int main(int argc, char **argv) {
       return 1;
     }
     diag.path = token_input.source_file;
+    if (row_source) {
+      ZRowTokenVec tokens = z_row_tokenize(token_input.source, &diag);
+      if (diag.code != 0) {
+        z_map_source_diag(&token_input, &diag);
+        if (command.json) print_diag_json(diag.path ? diag.path : command.input, &diag);
+        else print_diag(diag.path ? diag.path : command.input, &diag);
+        z_free_row_tokens(&tokens);
+        z_free_source(&token_input);
+        return 1;
+      }
+      if (command.json) {
+        ZBuf buf;
+        zbuf_init(&buf);
+        append_row_tokens_json(&buf, token_input.source_file, &tokens);
+        fputs(buf.data, stdout);
+        zbuf_free(&buf);
+      } else {
+        for (size_t i = 0; i < tokens.len; i++) {
+          printf("%s %s %d:%d\n", row_token_kind_name(tokens.items[i].kind), tokens.items[i].text, tokens.items[i].line, tokens.items[i].column);
+        }
+      }
+      z_free_row_tokens(&tokens);
+      z_free_source(&token_input);
+      return 0;
+    }
     TokenVec tokens = z_tokenize(token_input.source, &diag);
     if (diag.code != 0) {
       z_map_source_diag(&token_input, &diag);
@@ -9209,7 +9446,14 @@ int main(int argc, char **argv) {
 
   if (strcmp(command.command, "parse") == 0) {
     SourceInput parse_input = {0};
-    if (has_suffix(command.input, ".0")) {
+    bool row_source = is_row_source_path(command.input);
+    if (row_source) {
+      if (!load_direct_row_source(command.input, &parse_input, &diag)) {
+        if (command.json) print_diag_json(command.input, &diag);
+        else print_diag(diag.path ? diag.path : command.input, &diag);
+        return 1;
+      }
+    } else if (has_suffix(command.input, ".0")) {
       parse_input.source_file = z_strdup(command.input);
       parse_input.source = z_read_file(command.input, &diag);
     } else if (!z_resolve_source(command.input, &parse_input, &diag)) {
@@ -9224,9 +9468,14 @@ int main(int argc, char **argv) {
       return 1;
     }
     diag.path = parse_input.source_file;
-    TokenVec tokens = z_tokenize(parse_input.source, &diag);
     Program parsed = {0};
-    if (diag.code == 0) parsed = z_parse(&tokens, &diag);
+    TokenVec tokens = {0};
+    if (row_source) {
+      parse_row_source_text(parse_input.source, &parsed, &diag);
+    } else {
+      tokens = z_tokenize(parse_input.source, &diag);
+      if (diag.code == 0) parsed = z_parse(&tokens, &diag);
+    }
     if (diag.code != 0) {
       z_map_source_diag(&parse_input, &diag);
       if (command.json) print_diag_json(diag.path ? diag.path : command.input, &diag);

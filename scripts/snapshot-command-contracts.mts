@@ -333,6 +333,42 @@ assert.equal(parseTree.functions[0].name, "main");
 assert.equal(parseTree.functions[0].paramCount, 1);
 assert.deepEqual(parseTree.functions[0].bodyKinds, ["if", "while", "check", "return"]);
 
+const rowCommandFixture = join(outDir, "row_command.row");
+const rowCommandSource =
+  "# command fixture\n" +
+  "fn inc i32 value i32\n" +
+  "  ret + value 1\n" +
+  "\n" +
+  "pub fn main Void\n" +
+  "  let total i32 inc 41\n";
+writeFileSync(rowCommandFixture, rowCommandSource);
+assert.equal(zero(["fmt", rowCommandFixture]).stdout, rowCommandSource);
+assert.match(zero(["fmt", "--check", rowCommandFixture]).stdout, /fmt ok/);
+const rowTokens = json(["tokens", "--json", rowCommandFixture]).body;
+assert.equal(rowTokens.schemaVersion, 1);
+assert.equal(rowTokens.syntax, "row");
+assert.deepEqual(rowTokens.tokens.slice(0, 4).map((token) => `${token.kind}:${token.text}`), [
+  "comment:# command fixture",
+  "newline:",
+  "word:fn",
+  "word:inc",
+]);
+const rowParseTree = json(["parse", "--json", rowCommandFixture]).body;
+assert.equal(rowParseTree.schemaVersion, 1);
+assert.equal(rowParseTree.root.functionCount, 2);
+assert.deepEqual(rowParseTree.functions.map((fun) => fun.name), ["inc", "main"]);
+assert.deepEqual(rowParseTree.functions.map((fun) => fun.bodyKinds), [["return"], ["let"]]);
+const rowCheck = json(["check", "--json", rowCommandFixture]).body;
+assert.equal(rowCheck.ok, true);
+assert.equal(rowCheck.sourceFile, rowCommandFixture);
+assert(rowCheck.interfaceFingerprints.modules.some((module) => module.name === "row_command" && module.publicSymbols.some((symbol) => symbol.name === "main")));
+const rowGraph = json(["graph", "--json", rowCommandFixture]).body;
+assert.equal(rowGraph.schemaVersion, 1);
+assert.equal(rowGraph.sourceFile, rowCommandFixture);
+assert(rowGraph.sourceFiles.includes(rowCommandFixture));
+assert(rowGraph.symbols.some((symbol) => symbol.name === "inc" && symbol.kind === "function"));
+assert(rowGraph.functions.some((fun) => fun.name === "main"));
+
 const testJson = json(["test", "--json", "--filter", "addition", "conformance/native/pass/test-blocks.0"]).body;
 assert.equal(testJson.schemaVersion, 1);
 assert.equal(testJson.ok, true);
