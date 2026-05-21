@@ -175,6 +175,8 @@ bool z_mir_verify_direct_contracts(IrProgram *ir) {
   if (!ir || !ir->mir_valid) return false;
   for (size_t i = 0; i < ir->function_len; i++) {
     if (!mir_verify_direct_function_contract(ir, &ir->functions[i])) return false;
+  }
+  for (size_t i = 0; i < ir->function_len; i++) {
     if (!mir_verify_direct_call_instrs(ir, ir->functions[i].instrs, ir->functions[i].instr_len)) return false;
   }
   return true;
