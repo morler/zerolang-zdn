@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 
 const LARGE_FUNCTION_REPORT_THRESHOLD = 80;
 const NEW_LARGE_FUNCTION_LIMIT = 120;
+const STRCMP_CALL_PATTERN = /\bstrcmp\s*\(/g;
 
 const sourceFileDirs = [
   "native/zero-c/include",
@@ -159,6 +160,57 @@ function cCodeLine(line: string, state: CScanState): string {
   return out;
 }
 
+function cCodeText(text: string): string {
+  const state = createCScanState();
+  return text.split("\n").map((line) => cCodeLine(line, state)).join("\n");
+}
+
+function cTextWithoutComments(text: string): string {
+  let out = "";
+  let blockComment = false;
+  let quote: "\"" | "'" | null = null;
+  for (let index = 0; index < text.length; index++) {
+    const ch = text[index];
+    const next = text[index + 1];
+    if (blockComment) {
+      if (ch === "*" && next === "/") {
+        out += "  ";
+        index++;
+        blockComment = false;
+      } else {
+        out += ch === "\n" ? "\n" : " ";
+      }
+      continue;
+    }
+    if (quote) {
+      out += ch;
+      if (ch === "\\" && index + 1 < text.length) {
+        out += text[index + 1];
+        index++;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      out += "  ";
+      index++;
+      blockComment = true;
+      continue;
+    }
+    if (ch === "/" && next === "/") {
+      const newline = text.indexOf("\n", index + 2);
+      const end = newline < 0 ? text.length : newline;
+      out += " ".repeat(end - index);
+      index = end - 1;
+      continue;
+    }
+    if (ch === "\"" || ch === "'") quote = ch;
+    out += ch;
+  }
+  return out;
+}
+
 function cCodeChar(text: string, index: number, state: CScanState): { ch: string; index: number } {
   const ch = text[index];
   const next = text[index + 1];
@@ -276,7 +328,7 @@ function cBlock(text, marker) {
 }
 
 function parseStdHelpers(text) {
-  const block = cBlock(text, "static const StdHelperInfo std_helpers[] =");
+  const block = cTextWithoutComments(cBlock(text, "static const StdHelperInfo std_helpers[] ="));
   return [...block.matchAll(/\{\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*(-?\d+)\s*,/g)]
     .map((match) => ({
       name: match[1],
@@ -287,21 +339,31 @@ function parseStdHelpers(text) {
 }
 
 function parseStdHttpErrorNames(text) {
-  const block = cBlock(text, "static int std_http_error_code");
+  const block = cTextWithoutComments(cBlock(text, "static int std_http_error_code"));
   return namesFromRegex(block, /strcmp\(name,\s+"(std\.[^"]+)"\)\s*==\s*0\)\s*return\s*\d+/g);
+}
+
+function checkerReturnTypeUsesStdHttpErrorCode(block: string): boolean {
+  return /std_http_error_code\s*\(\s*name\.data\s*\)\s*>=\s*0\s*\)\s*result\s*=\s*"HttpError"/.test(block);
+}
+
+function checkerArgCountUsesStdHttpErrorCode(block: string): boolean {
+  return /std_http_error_code\s*\(\s*name\s*\)\s*>=\s*0\s*\)\s*return\s*0\b/.test(block);
 }
 
 function parseCheckerReturnTypes(text) {
   const map = new Map();
   const names = [];
-  const block = cBlock(text, "static const char *std_call_return_type");
+  const block = cTextWithoutComments(cBlock(text, "static const char *std_call_return_type"));
   for (const match of block.matchAll(/strcmp\(name\.data,\s+"(std\.[^"]+)"\)\s*==\s*0\)\s*result\s*=\s*"([^"]+)"/g)) {
     names.push(match[1]);
     if (!map.has(match[1])) map.set(match[1], match[2]);
   }
-  for (const name of parseStdHttpErrorNames(text)) {
-    names.push(name);
-    if (!map.has(name)) map.set(name, "HttpError");
+  if (checkerReturnTypeUsesStdHttpErrorCode(block)) {
+    for (const name of parseStdHttpErrorNames(text)) {
+      names.push(name);
+      if (!map.has(name)) map.set(name, "HttpError");
+    }
   }
   return {
     map,
@@ -312,14 +374,16 @@ function parseCheckerReturnTypes(text) {
 function parseCheckerArgCounts(text) {
   const map = new Map();
   const names = [];
-  const block = cBlock(text, "static int std_call_arg_count");
+  const block = cTextWithoutComments(cBlock(text, "static int std_call_arg_count"));
   for (const match of block.matchAll(/strcmp\(name,\s+"(std\.[^"]+)"\)\s*==\s*0\)\s*return\s*(-?\d+)/g)) {
     names.push(match[1]);
     if (!map.has(match[1])) map.set(match[1], Number(match[2]));
   }
-  for (const name of parseStdHttpErrorNames(text)) {
-    names.push(name);
-    if (!map.has(name)) map.set(name, 0);
+  if (checkerArgCountUsesStdHttpErrorCode(block)) {
+    for (const name of parseStdHttpErrorNames(text)) {
+      names.push(name);
+      if (!map.has(name)) map.set(name, 0);
+    }
   }
   return {
     map,
@@ -328,7 +392,7 @@ function parseCheckerArgCounts(text) {
 }
 
 function parseCheckerArgTypeNames(text) {
-  const block = cBlock(text, "static const char *std_call_arg_type");
+  const block = cTextWithoutComments(cBlock(text, "static const char *std_call_arg_type"));
   return namesFromRegex(block, /strcmp\(name,\s+"(std\.[^"]+)"/g);
 }
 
@@ -515,7 +579,7 @@ for (const path of sourceFiles) {
 
 const files = Object.fromEntries([...texts.entries()].map(([path, text]) => [path, {
   lines: lineCount(text),
-  strcmpCalls: countMatches(text, /strcmp\(/g),
+  strcmpCalls: countMatches(cCodeText(text), STRCMP_CALL_PATTERN),
   unsupportedMarkers: countMatches(text, /Unknown|unsupported|currently|MVP|direct backend/g),
 }]));
 
@@ -529,7 +593,7 @@ const checkerArgCountInfo = parseCheckerArgCounts(checker);
 const checkerReturnTypes = checkerReturnTypeInfo.map;
 const checkerArgCounts = checkerArgCountInfo.map;
 const checkerArgTypeNames = parseCheckerArgTypeNames(checker);
-const checkerKnownStdNames = namesFromRegex(checker, /"(std\.[^"]+)"/g);
+const checkerKnownStdNames = namesFromRegex(cTextWithoutComments(checker), /"(std\.[^"]+)"/g);
 const checkerReturnNames = sortedMapKeys(checkerReturnTypes);
 const checkerArgCountNames = sortedMapKeys(checkerArgCounts);
 const mainHelperNames = stdHelpers.map((helper) => helper.name);

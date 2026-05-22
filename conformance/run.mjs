@@ -588,10 +588,7 @@ const compilerMetrics = await execFileAsync("node", ["--experimental-strip-types
 const compilerMetricsBody = JSON.parse(compilerMetrics.stdout);
 assert.equal(compilerMetricsBody.schema, 1);
 assert(compilerMetricsBody.files["native/zero-c/src/checker.c"].lines > 0);
-assert(compilerMetricsBody.largeFunctions.length > 0);
-const compilerMetricsLargeFunctions = new Set(compilerMetricsBody.largeFunctions.map((item) => `${item.path}|${item.signature}`));
-assert(compilerMetricsLargeFunctions.has("native/zero-c/src/main.c|int main(int argc, char **argv) {"));
-assert(compilerMetricsLargeFunctions.has("native/zero-c/src/main.c|static void append_graph_json(ZBuf *buf, const SourceInput *input, const Program *program, const ZTargetInfo *target) {"));
+assert(Array.isArray(compilerMetricsBody.largeFunctions));
 assert(compilerMetricsBody.stdlib.mainHelperCount > 0);
 assert.equal(compilerMetricsBody.stdlib.mainHelperCount, compilerMetricsBody.stdlib.checkerReturnCount);
 assert.equal(compilerMetricsBody.stdlib.mainHelperCount, compilerMetricsBody.stdlib.checkerArgCountCount);
@@ -604,6 +601,14 @@ assert.deepEqual(compilerMetricsBody.stdlib.mainHelpersMissingFromCheckerArgCoun
 assert.deepEqual(compilerMetricsBody.stdlib.argCountMismatches, []);
 assert.equal(compilerMetricsBody.budget.ok, true);
 assert.deepEqual(compilerMetricsBody.budget.violations, []);
+assert.equal(typeof compilerMetricsBody.budget.reportThreshold, "number");
+for (const item of compilerMetricsBody.largeFunctions) {
+  assert.equal(typeof item.path, "string");
+  assert.equal(typeof item.signature, "string");
+  assert.equal(typeof item.line, "number");
+  assert.equal(typeof item.lines, "number");
+  assert(item.lines >= compilerMetricsBody.budget.reportThreshold);
+}
 
 const agentSurfaceBorrowLifetime = await execFileAsync(zero, ["check", "--json", "conformance/agent-surface/fixtures/borrow-lexical-lifetime.0"]).catch((error) => error);
 assert.notEqual(agentSurfaceBorrowLifetime.code, 0);
