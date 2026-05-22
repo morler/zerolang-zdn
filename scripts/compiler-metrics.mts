@@ -816,13 +816,15 @@ const hasRawX64RegisterImmediateBytes = (text: string) =>
   rawX64RegisterImmediateHelperPrefix.test(text);
 const rawX64ArithmeticRegReg = /(?:\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x4[0-9a-f]\s*\)\s*;\s*)?\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x(?:01|29|31)\s*\)\s*;\s*\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x[c-f][0-9a-f]\s*\)/is;
 const rawX64ArithmeticImm8 = /(?:\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x4[0-9a-f]\s*\)\s*;\s*)?\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x83\s*\)\s*;\s*\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x(?:c[0-7]|e[0-7])\s*\)/is;
-const rawX64ArithmeticImm32 = /(?:\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x4[0-9a-f]\s*\)\s*;\s*)?\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x(?:69|81)\s*\)\s*;\s*\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x[ce][0-9a-f]\s*\)\s*;\s*\bz_x64_append_u32\s*\(/is;
+const rawX64ArithmeticImulImm32 = /(?:\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x4[0-9a-f]\s*\)\s*;\s*)?\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x69\s*\)\s*;\s*\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x[c-f][0-9a-f]\s*\)\s*;\s*\bz_x64_append_u32\s*\(/is;
+const rawX64ArithmeticGroupImm32 = /(?:\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x4[0-9a-f]\s*\)\s*;\s*)?\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x81\s*\)\s*;\s*\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x(?:c[0-7]|e[0-7]|e[8-f])\s*\)\s*;\s*\bz_x64_append_u32\s*\(/is;
 const rawX64ArithmeticAccumulatorImm32 = /(?:\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x48\s*\)\s*;\s*)?\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x(?:05|2d)\s*\)\s*;\s*\bz_x64_append_u32\s*\(/is;
 const rawX64ArithmeticUnary = /(?:\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x4[0-9a-f]\s*\)\s*;\s*)?\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x(?:d1|f7|c1)\s*\)\s*;\s*\bz_x64_append_u8\s*\(\s*(?:code|text)\s*,\s*0x(?:d[8-f]|e[0-9a-f])\s*\)/is;
 const hasRawX64ArithmeticBytes = (text: string) =>
   rawX64ArithmeticRegReg.test(text) ||
   rawX64ArithmeticImm8.test(text) ||
-  rawX64ArithmeticImm32.test(text) ||
+  rawX64ArithmeticImulImm32.test(text) ||
+  rawX64ArithmeticGroupImm32.test(text) ||
   rawX64ArithmeticAccumulatorImm32.test(text) ||
   rawX64ArithmeticUnary.test(text);
 const backendFormats = {
