@@ -5868,7 +5868,7 @@ static bool check_expr_expected(CheckContext *ctx, const Program *program, const
         if (mutspan_element_text(expected, expected_element, sizeof(expected_element)) &&
             fixed_array_type_parts(actual, NULL, 0, actual_element, sizeof(actual_element))) {
           if (!scope_is_mutable(scope, expr->text)) {
-            return set_diag_detail(diag, 3010, "cannot create MutSpan from immutable array binding", expr->line, expr->column, "array binding declared with let mut", "immutable array binding", "add mut to the array binding before creating a MutSpan");
+            return set_diag_detail(diag, 3010, "cannot create MutSpan from immutable array binding", expr->line, expr->column, "array binding declared with mut", "immutable array binding", "add mut to the array binding before creating a MutSpan");
           }
           if (!types_compatible_in_scope(program, scope, expected_element, actual_element)) {
             return set_diag_detail(diag, 3006, "MutSpan element type does not match array element", expr->line, expr->column, expected_element, actual_element, "use a MutSpan with the same element type as the array");
@@ -6261,17 +6261,17 @@ static bool check_expr_expected(CheckContext *ctx, const Program *program, const
             if (receiver_requires_mut) {
               if (receiver_is_ref) {
                 z_call_resolution_free(&resolution);
-                return set_diag_detail(diag, 3049, "receiver method requires a mutable receiver", receiver->line, receiver->column, "mutref<Self> receiver or mutable shape lvalue", receiver_type, "call the method on a let mut value or pass a mutref receiver");
+                return set_diag_detail(diag, 3049, "receiver method requires a mutable receiver", receiver->line, receiver->column, "mutref<Self> receiver or mutable record lvalue", receiver_type, "call the method on a mut value or pass a mutref receiver");
               }
               if (!receiver_is_mutref) {
                 if (!expr_is_addressable(receiver)) {
                   z_call_resolution_free(&resolution);
-                  return set_diag_detail(diag, 3049, "receiver method requires an addressable mutable receiver", receiver->line, receiver->column, "let mut shape value", "temporary receiver", "store the value in a let mut binding before calling the mutating method");
+                  return set_diag_detail(diag, 3049, "receiver method requires an addressable mutable receiver", receiver->line, receiver->column, "mut record value", "temporary receiver", "store the value in a mut binding before calling the mutating method");
                 }
                 char root[128];
                 if (expr_root_ident(receiver, root, sizeof(root)) && !scope_is_mutable(scope, root)) {
                   z_call_resolution_free(&resolution);
-                  return set_diag_detail(diag, 3049, "receiver method requires a mutable receiver", receiver->line, receiver->column, "let mut receiver binding", "immutable receiver binding", "declare the receiver with let mut before calling a mutating method");
+                  return set_diag_detail(diag, 3049, "receiver method requires a mutable receiver", receiver->line, receiver->column, "mut receiver binding", "immutable receiver binding", "declare the receiver with mut before calling a mutating method");
                 }
                 char lvalue_type[192];
                 if (!check_lvalue_target(ctx, program, receiver, scope, diag, lvalue_type, sizeof(lvalue_type))) {
@@ -6544,12 +6544,12 @@ static bool check_expr_expected(CheckContext *ctx, const Program *program, const
             const char *alloc_type = expr_type(ctx, program, expr->args.items[0], scope);
             if (!is_allocator_type(alloc_type)) {
               zbuf_free(&std_name);
-              return set_diag_detail(diag, 3012, "std.mem.allocBytes expects an allocator primitive", expr->args.items[0]->line, expr->args.items[0]->column, "NullAlloc or mutable FixedBufAlloc", alloc_type, "use std.mem.nullAlloc() or a let mut FixedBufAlloc from std.mem.fixedBufAlloc(buffer)");
+              return set_diag_detail(diag, 3012, "std.mem.allocBytes expects an allocator primitive", expr->args.items[0]->line, expr->args.items[0]->column, "NullAlloc or mutable FixedBufAlloc", alloc_type, "use std.mem.nullAlloc() or a mut FixedBufAlloc from std.mem.fixedBufAlloc(buffer)");
             }
             if (strcmp(alloc_type, "FixedBufAlloc") == 0 &&
                 (expr->args.items[0]->kind != EXPR_IDENT || !scope_is_mutable(scope, expr->args.items[0]->text))) {
               zbuf_free(&std_name);
-              return set_diag_detail(diag, 3012, "std.mem.allocBytes requires a mutable FixedBufAlloc binding", expr->args.items[0]->line, expr->args.items[0]->column, "let mut allocator: FixedBufAlloc", "immutable or temporary FixedBufAlloc", "store the fixed buffer allocator in a let mut binding before allocating");
+              return set_diag_detail(diag, 3012, "std.mem.allocBytes requires a mutable FixedBufAlloc binding", expr->args.items[0]->line, expr->args.items[0]->column, "mut allocator FixedBufAlloc", "immutable or temporary FixedBufAlloc", "store the fixed buffer allocator in a mut binding before allocating");
             }
             if (!check_expr_expected(ctx, program, expr->args.items[1], scope, diag, "usize")) {
               zbuf_free(&std_name);
@@ -6572,12 +6572,12 @@ static bool check_expr_expected(CheckContext *ctx, const Program *program, const
             const char *alloc_type = expr_type(ctx, program, expr->args.items[0], scope);
             if (!is_allocator_type(alloc_type)) {
               zbuf_free(&std_name);
-              return set_diag_detail(diag, 3012, "std.mem.byteBuf expects an allocator primitive", expr->args.items[0]->line, expr->args.items[0]->column, "NullAlloc or mutable FixedBufAlloc", alloc_type, "use std.mem.nullAlloc() or a let mut FixedBufAlloc from std.mem.fixedBufAlloc(buffer)");
+              return set_diag_detail(diag, 3012, "std.mem.byteBuf expects an allocator primitive", expr->args.items[0]->line, expr->args.items[0]->column, "NullAlloc or mutable FixedBufAlloc", alloc_type, "use std.mem.nullAlloc() or a mut FixedBufAlloc from std.mem.fixedBufAlloc(buffer)");
             }
             if (strcmp(alloc_type, "FixedBufAlloc") == 0 &&
                 (expr->args.items[0]->kind != EXPR_IDENT || !scope_is_mutable(scope, expr->args.items[0]->text))) {
               zbuf_free(&std_name);
-              return set_diag_detail(diag, 3012, "std.mem.byteBuf requires a mutable FixedBufAlloc binding", expr->args.items[0]->line, expr->args.items[0]->column, "let mut allocator: FixedBufAlloc", "immutable or temporary FixedBufAlloc", "store the fixed buffer allocator in a let mut binding before allocating a ByteBuf");
+              return set_diag_detail(diag, 3012, "std.mem.byteBuf requires a mutable FixedBufAlloc binding", expr->args.items[0]->line, expr->args.items[0]->column, "mut allocator FixedBufAlloc", "immutable or temporary FixedBufAlloc", "store the fixed buffer allocator in a mut binding before allocating a ByteBuf");
             }
             if (!check_expr_expected(ctx, program, expr->args.items[1], scope, diag, "usize")) {
               zbuf_free(&std_name);
@@ -6639,7 +6639,7 @@ static bool check_expr_expected(CheckContext *ctx, const Program *program, const
                 (expr->args.items[0]->kind != EXPR_IDENT || !scope_is_mutable(scope, expr->args.items[0]->text))) {
               z_call_resolution_free(&read_all_resolution);
               zbuf_free(&std_name);
-              return set_diag_detail(diag, 3012, "std.fs.readAll requires a mutable FixedBufAlloc binding", expr->args.items[0]->line, expr->args.items[0]->column, "let mut allocator: FixedBufAlloc", "immutable or temporary FixedBufAlloc", "store the fixed buffer allocator in a let mut binding before reading");
+              return set_diag_detail(diag, 3012, "std.fs.readAll requires a mutable FixedBufAlloc binding", expr->args.items[0]->line, expr->args.items[0]->column, "mut allocator FixedBufAlloc", "immutable or temporary FixedBufAlloc", "store the fixed buffer allocator in a mut binding before reading");
             }
             if (!check_stdlib_table_arg_range_expected(ctx, program, expr, scope, diag, std_name.data, 1, false, read_all_resolved ? &read_all_resolution : NULL)) {
               z_call_resolution_free(&read_all_resolution);
@@ -6668,7 +6668,7 @@ static bool check_expr_expected(CheckContext *ctx, const Program *program, const
               char message[256];
               snprintf(message, sizeof(message), "%s requires a mutable FixedBufAlloc binding", std_name.data);
               zbuf_free(&std_name);
-              return set_diag_detail(diag, 3012, message, expr->args.items[0]->line, expr->args.items[0]->column, "let mut allocator: FixedBufAlloc", "immutable or temporary FixedBufAlloc", "store the fixed buffer allocator in a let mut binding before parsing JSON");
+              return set_diag_detail(diag, 3012, message, expr->args.items[0]->line, expr->args.items[0]->column, "mut allocator FixedBufAlloc", "immutable or temporary FixedBufAlloc", "store the fixed buffer allocator in a mut binding before parsing JSON");
             }
             const char *expected = strcmp(std_name.data, "std.json.parseBytes") == 0 ? "Span<u8>" : "String";
             if (!check_expr_expected(ctx, program, expr->args.items[1], scope, diag, expected)) {
@@ -7019,7 +7019,7 @@ static bool check_lvalue_target(CheckContext *ctx, const Program *program, const
         return set_diag_detail(diag, 3003, message, target->line, target->column, "visible mutable local", "no matching visible symbol", "declare the name before assigning it");
       }
       if (!scope_is_mutable(scope, target->text)) {
-        return set_diag_detail(diag, 3010, "cannot assign through immutable binding", target->line, target->column, "binding declared with let mut", "immutable binding", "add mut to the root binding before assigning through it");
+        return set_diag_detail(diag, 3010, "cannot assign through immutable binding", target->line, target->column, "binding declared with mut", "immutable binding", "add mut to the root binding before assigning through it");
       }
       const char *type = scope_type(scope, target->text);
       if (type_is_const(type)) {
@@ -9022,7 +9022,7 @@ static bool validate_shape_layout(const Shape *shape, ZDiag *diag) {
     if (!ok) {
       char actual[160];
       snprintf(actual, sizeof(actual), "%s field '%s': %s", shape->layout, field->name ? field->name : "<field>", field->type ? field->type : "Unknown");
-      return set_diag_detail(diag, 3031, is_extern ? "extern shape field is not ABI-safe" : "packed shape field must be scalar integer-like data", field->line, field->column, is_extern ? "primitive scalar or explicit ref/mutref field" : "integer, Bool, or char field", actual, is_extern ? "use explicit scalar fields at C ABI boundaries" : "use fixed-width integer fields for packed layout");
+      return set_diag_detail(diag, 3031, is_extern ? "extern type field is not ABI-safe" : "packed type field must be scalar integer-like data", field->line, field->column, is_extern ? "primitive scalar or explicit ref/mutref field" : "integer, Bool, or char field", actual, is_extern ? "use explicit scalar fields at C ABI boundaries" : "use fixed-width integer fields for packed layout");
     }
   }
   return true;
