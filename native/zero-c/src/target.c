@@ -330,33 +330,63 @@ static const char *target_libc_mode(const ZTargetInfo *target) {
   return z_target_libc_mode(target);
 }
 
-const char *z_direct_object_emitter(const ZTargetInfo *target) {
-  if (!target) return "none";
+ZDirectBackend z_direct_object_backend(const ZTargetInfo *target) {
+  if (!target) return Z_DIRECT_BACKEND_NONE;
   const char *format = target->object_format ? target->object_format : "";
   const char *arch = target->arch ? target->arch : "";
   const char *os = target->os ? target->os : "";
-  if (strcmp(format, "elf") == 0 && strcmp(arch, "x86_64") == 0 && strcmp(os, "linux") == 0) return "zero-elf64";
-  if (strcmp(format, "elf") == 0 && strcmp(arch, "aarch64") == 0 && strcmp(os, "linux") == 0) return "zero-elf-aarch64";
-  if (strcmp(format, "macho") == 0 && strcmp(arch, "aarch64") == 0 && strcmp(os, "macos") == 0) return "zero-macho64";
-  if (strcmp(format, "coff") == 0 && strcmp(arch, "x86_64") == 0 && strcmp(os, "windows") == 0) return "zero-coff-x64";
+  if (strcmp(format, "elf") == 0 && strcmp(arch, "x86_64") == 0 && strcmp(os, "linux") == 0) return Z_DIRECT_BACKEND_ELF64;
+  if (strcmp(format, "elf") == 0 && strcmp(arch, "aarch64") == 0 && strcmp(os, "linux") == 0) return Z_DIRECT_BACKEND_ELF_AARCH64;
+  if (strcmp(format, "macho") == 0 && strcmp(arch, "aarch64") == 0 && strcmp(os, "macos") == 0) return Z_DIRECT_BACKEND_MACHO64;
+  if (strcmp(format, "coff") == 0 && strcmp(arch, "x86_64") == 0 && strcmp(os, "windows") == 0) return Z_DIRECT_BACKEND_COFF_X64;
+  return Z_DIRECT_BACKEND_NONE;
+}
+
+ZDirectBackend z_direct_exe_backend(const ZTargetInfo *target) {
+  if (!target) return Z_DIRECT_BACKEND_NONE;
+  if (target->name && strcmp(target->name, "linux-x64") == 0) return Z_DIRECT_BACKEND_ELF64;
+  if (target->name && strcmp(target->name, "linux-musl-x64") == 0) return Z_DIRECT_BACKEND_ELF64;
+  if (target->name && strcmp(target->name, "linux-musl-arm64") == 0) return Z_DIRECT_BACKEND_ELF_AARCH64;
+  if (target->name && strcmp(target->name, "linux-arm64") == 0) return Z_DIRECT_BACKEND_ELF_AARCH64;
+  if (target->name && strcmp(target->name, "darwin-arm64") == 0) return Z_DIRECT_BACKEND_MACHO64;
+  if (target->name && strcmp(target->name, "win32-x64.exe") == 0) return Z_DIRECT_BACKEND_COFF_X64;
+  return Z_DIRECT_BACKEND_NONE;
+}
+
+const char *z_direct_backend_object_emitter(ZDirectBackend backend) {
+  switch (backend) {
+    case Z_DIRECT_BACKEND_ELF64: return "zero-elf64";
+    case Z_DIRECT_BACKEND_ELF_AARCH64: return "zero-elf-aarch64";
+    case Z_DIRECT_BACKEND_MACHO64: return "zero-macho64";
+    case Z_DIRECT_BACKEND_COFF_X64: return "zero-coff-x64";
+    case Z_DIRECT_BACKEND_NONE: return "none";
+  }
   return "none";
 }
 
-const char *z_direct_exe_emitter(const ZTargetInfo *target) {
-  if (!target) return "none";
-  if (target->name && strcmp(target->name, "linux-x64") == 0) return "zero-elf64-exe";
-  if (target->name && strcmp(target->name, "linux-musl-x64") == 0) return "zero-elf64-exe";
-  if (target->name && strcmp(target->name, "linux-musl-arm64") == 0) return "zero-elf-aarch64-exe";
-  if (target->name && strcmp(target->name, "linux-arm64") == 0) return "zero-elf-aarch64-exe";
-  if (target->name && strcmp(target->name, "darwin-arm64") == 0) return "zero-macho64-exe";
-  if (target->name && strcmp(target->name, "win32-x64.exe") == 0) return "zero-coff-x64-exe";
+const char *z_direct_backend_exe_emitter(ZDirectBackend backend) {
+  switch (backend) {
+    case Z_DIRECT_BACKEND_ELF64: return "zero-elf64-exe";
+    case Z_DIRECT_BACKEND_ELF_AARCH64: return "zero-elf-aarch64-exe";
+    case Z_DIRECT_BACKEND_MACHO64: return "zero-macho64-exe";
+    case Z_DIRECT_BACKEND_COFF_X64: return "zero-coff-x64-exe";
+    case Z_DIRECT_BACKEND_NONE: return "none";
+  }
   return "none";
+}
+
+const char *z_direct_object_emitter(const ZTargetInfo *target) {
+  return z_direct_backend_object_emitter(z_direct_object_backend(target));
+}
+
+const char *z_direct_exe_emitter(const ZTargetInfo *target) {
+  return z_direct_backend_exe_emitter(z_direct_exe_backend(target));
 }
 
 const char *z_direct_backend_status(const ZTargetInfo *target) {
   if (!target) return "known-unimplemented";
-  if (strcmp(z_direct_exe_emitter(target), "none") != 0) return "native-exe";
-  if (strcmp(z_direct_object_emitter(target), "none") != 0) return "native-object";
+  if (z_direct_exe_backend(target) != Z_DIRECT_BACKEND_NONE) return "native-exe";
+  if (z_direct_object_backend(target) != Z_DIRECT_BACKEND_NONE) return "native-object";
   return "known-unimplemented";
 }
 
@@ -364,8 +394,8 @@ const char *z_direct_backend_reason(const ZTargetInfo *target) {
   if (!target) return "unknown target";
   const char *format = target->object_format ? target->object_format : "unknown";
   const char *arch = target->arch ? target->arch : "unknown";
-  if (strcmp(z_direct_object_emitter(target), "none") != 0) {
-    if (strcmp(z_direct_exe_emitter(target), "none") != 0) return "direct object and executable backend available";
+  if (z_direct_object_backend(target) != Z_DIRECT_BACKEND_NONE) {
+    if (z_direct_exe_backend(target) != Z_DIRECT_BACKEND_NONE) return "direct object and executable backend available";
     return "direct object backend available; direct executable linker is not implemented for this target";
   }
   if (strcmp(format, "elf") == 0 && strcmp(arch, "aarch64") == 0) return "AArch64 ELF machine-code backend is not implemented yet";
@@ -389,14 +419,16 @@ static void append_target_toolchain_json(ZBuf *buf, const ZTargetInfo *target) {
 }
 
 static void append_target_direct_backend_json(ZBuf *buf, const ZTargetInfo *target) {
-  const char *object_emitter = z_direct_object_emitter(target);
-  const char *exe_emitter = z_direct_exe_emitter(target);
+  ZDirectBackend object_backend = z_direct_object_backend(target);
+  ZDirectBackend exe_backend = z_direct_exe_backend(target);
+  const char *object_emitter = z_direct_backend_object_emitter(object_backend);
+  const char *exe_emitter = z_direct_backend_exe_emitter(exe_backend);
   zbuf_appendf(
     buf,
     "{\"status\":\"%s\",\"objectSupported\":%s,\"exeSupported\":%s,\"objectEmitter\":\"%s\",\"exeEmitter\":\"%s\",\"objectFormat\":\"%s\",\"arch\":\"%s\",\"abi\":\"%s\",\"reason\":\"%s\",\"fallback\":\"removed\",\"explicitDirectFallback\":\"never-c-bridge\"}",
     z_direct_backend_status(target),
-    strcmp(object_emitter, "none") != 0 ? "true" : "false",
-    strcmp(exe_emitter, "none") != 0 ? "true" : "false",
+    object_backend != Z_DIRECT_BACKEND_NONE ? "true" : "false",
+    exe_backend != Z_DIRECT_BACKEND_NONE ? "true" : "false",
     object_emitter,
     exe_emitter,
     target && target->object_format ? target->object_format : "unknown",
@@ -407,12 +439,12 @@ static void append_target_direct_backend_json(ZBuf *buf, const ZTargetInfo *targ
 }
 
 static bool target_http_runtime_supported(const ZTargetInfo *target) {
-  const char *object_emitter = z_direct_object_emitter(target);
+  ZDirectBackend object_backend = z_direct_object_backend(target);
   return target &&
          z_target_is_host(target) &&
          z_target_has_capability(target, "net") &&
-         (strcmp(object_emitter, "zero-macho64") == 0 || strcmp(object_emitter, "zero-elf64") == 0) &&
-         strcmp(z_direct_exe_emitter(target), "none") != 0 &&
+         (object_backend == Z_DIRECT_BACKEND_MACHO64 || object_backend == Z_DIRECT_BACKEND_ELF64) &&
+         z_direct_exe_backend(target) != Z_DIRECT_BACKEND_NONE &&
          ((target->os && strcmp(target->os, "macos") == 0) ||
           (target->os && strcmp(target->os, "linux") == 0));
 }
@@ -422,10 +454,11 @@ void z_append_http_runtime_json(ZBuf *buf, const ZTargetInfo *target) {
     zbuf_append(buf, "{\"status\":\"supported\",\"provider\":\"curl\",\"providerLink\":\"system-library\",\"tlsBoundary\":\"platform-or-c-library\",\"caSource\":\"provider-default\",\"tlsVerification\":true,\"customCa\":{\"supported\":true,\"mode\":\"test-harness\",\"env\":\"ZERO_HTTP_TEST_CA_BUNDLE\"},\"insecureMode\":false,\"protocols\":[\"http\",\"https\"],\"staticLibraries\":[\"zero_runtime.o\",\"zero_http_curl.o\"],\"systemLibraries\":[\"curl\"],\"reason\":\"host direct runtime link plan uses libcurl with verification enabled\"}");
     return;
   }
+  ZDirectBackend object_backend = z_direct_object_backend(target);
   const char *reason = "target has no audited HTTP runtime provider";
   if (target && !z_target_has_capability(target, "net")) reason = "target lacks net capability";
   else if (target && !z_target_is_host(target)) reason = "HTTP runtime provider is host-only today";
-  else if (target && strcmp(z_direct_object_emitter(target), "zero-macho64") != 0 && strcmp(z_direct_object_emitter(target), "zero-elf64") != 0) reason = "target lacks host runtime relocation support";
+  else if (target && object_backend != Z_DIRECT_BACKEND_MACHO64 && object_backend != Z_DIRECT_BACKEND_ELF64) reason = "target lacks host runtime relocation support";
   zbuf_appendf(
     buf,
     "{\"status\":\"unsupported\",\"provider\":null,\"providerLink\":\"none\",\"tlsBoundary\":\"none\",\"caSource\":\"none\",\"tlsVerification\":false,\"customCa\":{\"supported\":false,\"mode\":\"none\",\"env\":\"\"},\"insecureMode\":false,\"protocols\":[],\"staticLibraries\":[],\"systemLibraries\":[],\"reason\":\"%s\"}",

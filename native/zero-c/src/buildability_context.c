@@ -135,33 +135,23 @@ bool z_build_diag(const ZBuildability *ctx, ZDiag *diag, const char *message, in
   return false;
 }
 
-static ZBuildBackend build_backend_from_name(const char *name) {
-  if (!name) return Z_BUILD_BACKEND_NONE;
-  if (strcmp(name, "zero-elf64") == 0 || strcmp(name, "zero-elf64-exe") == 0) return Z_BUILD_BACKEND_ELF64;
-  if (strcmp(name, "zero-elf-aarch64") == 0 || strcmp(name, "zero-elf-aarch64-exe") == 0) return Z_BUILD_BACKEND_ELF_AARCH64;
-  if (strcmp(name, "zero-macho64") == 0 || strcmp(name, "zero-macho64-exe") == 0) return Z_BUILD_BACKEND_MACHO64;
-  if (strcmp(name, "zero-coff-x64") == 0 || strcmp(name, "zero-coff-x64-exe") == 0) return Z_BUILD_BACKEND_COFF_X64;
-  return Z_BUILD_BACKEND_NONE;
-}
-
-static const char *build_expected_for_backend(ZBuildBackend backend, const char *emit_kind) {
-  const char *kind = emit_kind && strcmp(emit_kind, "exe") == 0 ? "executable" : "object";
+static const char *build_expected_for_backend(ZDirectBackend backend, bool executable) {
   switch (backend) {
-    case Z_BUILD_BACKEND_ELF64: return strcmp(kind, "executable") == 0 ? "direct ELF64 executable buildability subset" : "direct ELF64 object buildability subset";
-    case Z_BUILD_BACKEND_ELF_AARCH64: return strcmp(kind, "executable") == 0 ? "direct AArch64 ELF executable MVP subset" : "direct AArch64 ELF object MVP subset";
-    case Z_BUILD_BACKEND_MACHO64: return strcmp(kind, "executable") == 0 ? "direct AArch64 Mach-O executable buildability subset" : "direct AArch64 Mach-O object buildability subset";
-    case Z_BUILD_BACKEND_COFF_X64: return strcmp(kind, "executable") == 0 ? "direct COFF x64 executable buildability subset" : "direct COFF x64 object buildability subset";
+    case Z_DIRECT_BACKEND_ELF64: return executable ? "direct ELF64 executable buildability subset" : "direct ELF64 object buildability subset";
+    case Z_DIRECT_BACKEND_ELF_AARCH64: return executable ? "direct AArch64 ELF executable MVP subset" : "direct AArch64 ELF object MVP subset";
+    case Z_DIRECT_BACKEND_MACHO64: return executable ? "direct AArch64 Mach-O executable buildability subset" : "direct AArch64 Mach-O object buildability subset";
+    case Z_DIRECT_BACKEND_COFF_X64: return executable ? "direct COFF x64 executable buildability subset" : "direct COFF x64 object buildability subset";
     default: return "direct backend buildability subset";
   }
 }
 
-static const char *build_help_for_backend(ZBuildBackend backend) {
+static const char *build_help_for_backend(ZDirectBackend backend) {
   switch (backend) {
-    case Z_BUILD_BACKEND_ELF_AARCH64:
+    case Z_DIRECT_BACKEND_ELF_AARCH64:
       return "choose a supported direct target or restrict this program to exported functions returning small integer literals";
-    case Z_BUILD_BACKEND_COFF_X64:
+    case Z_DIRECT_BACKEND_COFF_X64:
       return "reduce the program to primitive direct-backend constructs or choose a supported direct target";
-    case Z_BUILD_BACKEND_MACHO64:
+    case Z_DIRECT_BACKEND_MACHO64:
       return "choose a supported direct target or reduce the program to Mach-O supported direct-backend constructs";
     default:
       return "choose a supported direct target or restrict this program to the ELF64 direct-backend subset";
@@ -170,14 +160,15 @@ static const char *build_help_for_backend(ZBuildBackend backend) {
 
 bool z_build_select(const IrProgram *ir, const ZTargetInfo *target, const char *emit_kind, ZBuildability *ctx, ZDiag *diag) {
   memset(ctx, 0, sizeof(*ctx));
+  bool executable = emit_kind && strcmp(emit_kind, "exe") == 0;
   ctx->target = target;
-  ctx->emit_kind = emit_kind && strcmp(emit_kind, "exe") == 0 ? "exe" : "obj";
-  ctx->backend_name = strcmp(ctx->emit_kind, "exe") == 0 ? z_direct_exe_emitter(target) : z_direct_object_emitter(target);
-  ctx->backend = build_backend_from_name(ctx->backend_name);
-  ctx->expected = build_expected_for_backend(ctx->backend, ctx->emit_kind);
+  ctx->emit_kind = executable ? "exe" : "obj";
+  ctx->backend = executable ? z_direct_exe_backend(target) : z_direct_object_backend(target);
+  ctx->backend_name = executable ? z_direct_backend_exe_emitter(ctx->backend) : z_direct_backend_object_emitter(ctx->backend);
+  ctx->expected = build_expected_for_backend(ctx->backend, executable);
   ctx->help = build_help_for_backend(ctx->backend);
   if (!ir) return z_build_diag(ctx, diag, "direct backend buildability requires MIR", 1, 1, "missing MIR");
-  if (!ctx->backend_name || strcmp(ctx->backend_name, "none") == 0 || ctx->backend == Z_BUILD_BACKEND_NONE) {
+  if (ctx->backend == Z_DIRECT_BACKEND_NONE) {
     return z_build_diag(ctx, diag, "direct backend does not support this target and artifact kind", 1, 1, target && target->name ? target->name : "unknown target");
   }
   return true;

@@ -3,21 +3,13 @@
 
 #include "buildability.h"
 
-typedef enum {
-  Z_BUILD_BACKEND_NONE,
-  Z_BUILD_BACKEND_ELF64,
-  Z_BUILD_BACKEND_ELF_AARCH64,
-  Z_BUILD_BACKEND_MACHO64,
-  Z_BUILD_BACKEND_COFF_X64
-} ZBuildBackend;
-
 typedef struct {
   const ZTargetInfo *target;
   const char *emit_kind;
   const char *backend_name;
   const char *expected;
   const char *help;
-  ZBuildBackend backend;
+  ZDirectBackend backend;
 } ZBuildability;
 
 enum {

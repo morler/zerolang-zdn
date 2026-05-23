@@ -4930,7 +4930,7 @@ static void append_release_target_contract_json(ZBuf *buf, const SourceInput *in
   const char *selected_emitter = direct_emit_emitter(target, command, emit_kind);
   const char *object_format = target && target->object_format ? target->object_format : "unknown";
   if ((!selected_emitter || strcmp(selected_emitter, "none") == 0) && emit_kind && strcmp(emit_kind, "exe") == 0 &&
-      z_direct_exe_emitter(target) && strcmp(z_direct_exe_emitter(target), "none") != 0) {
+      z_direct_exe_backend(target) != Z_DIRECT_BACKEND_NONE) {
     selected_emitter = z_direct_exe_emitter(target);
   }
   if (!selected_emitter) selected_emitter = "none";
@@ -8416,8 +8416,8 @@ static void apply_ir_metrics_to_input(SourceInput *input, const IrProgram *ir, c
   input->direct_export_count = ir->direct_export_count;
   input->direct_stack_bytes = ir->direct_stack_bytes;
   input->direct_max_frame_bytes = ir->direct_max_frame_bytes;
-  if (strcmp(z_direct_object_emitter(target), "zero-macho64") == 0 ||
-      strcmp(z_direct_exe_emitter(target), "zero-macho64-exe") == 0) {
+  if (z_direct_object_backend(target) == Z_DIRECT_BACKEND_MACHO64 ||
+      z_direct_exe_backend(target) == Z_DIRECT_BACKEND_MACHO64) {
     input->direct_stack_bytes = z_macho64_stack_bytes_from_ir(ir);
     input->direct_max_frame_bytes = z_macho64_max_frame_bytes_from_ir(ir);
   }

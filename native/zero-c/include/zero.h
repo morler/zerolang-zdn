@@ -788,6 +788,14 @@ typedef struct {
   const char *capabilities;
 } ZTargetInfo;
 
+typedef enum {
+  Z_DIRECT_BACKEND_NONE,
+  Z_DIRECT_BACKEND_ELF64,
+  Z_DIRECT_BACKEND_ELF_AARCH64,
+  Z_DIRECT_BACKEND_MACHO64,
+  Z_DIRECT_BACKEND_COFF_X64
+} ZDirectBackend;
+
 typedef struct {
   const char *driver_kind;
   const char *selection_source;
@@ -875,6 +883,10 @@ bool z_target_has_capability(const ZTargetInfo *target, const char *capability);
 const char *z_target_libc_mode(const ZTargetInfo *target);
 const char *z_target_sysroot_env_name(const ZTargetInfo *target);
 bool z_target_requires_sysroot(const ZTargetInfo *target);
+ZDirectBackend z_direct_object_backend(const ZTargetInfo *target);
+ZDirectBackend z_direct_exe_backend(const ZTargetInfo *target);
+const char *z_direct_backend_object_emitter(ZDirectBackend backend);
+const char *z_direct_backend_exe_emitter(ZDirectBackend backend);
 const char *z_direct_backend_status(const ZTargetInfo *target);
 const char *z_direct_object_emitter(const ZTargetInfo *target);
 const char *z_direct_exe_emitter(const ZTargetInfo *target);
