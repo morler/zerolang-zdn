@@ -4413,13 +4413,18 @@ static bool stdlib_call_error_sets_covered(const Function *caller, ZDiag *diag, 
   return result;
 }
 
+static bool stdlib_fallible_return_type_text(const Expr *expr, char *buf, size_t cap) {
+  if (!buf || cap == 0) return false;
+  ZCallResolution resolution = {0};
+  if (!resolve_stdlib_fallible_call(expr, &resolution)) return false;
+  snprintf(buf, cap, "%s", resolution.return_type ? resolution.return_type : "Unknown");
+  z_call_resolution_free(&resolution);
+  return true;
+}
+
 static const char *stdlib_fallible_return_type(const Expr *expr) {
   static char return_type[160];
-  ZCallResolution resolution = {0};
-  if (!resolve_stdlib_fallible_call(expr, &resolution)) return NULL;
-  snprintf(return_type, sizeof(return_type), "%s", resolution.return_type ? resolution.return_type : "Unknown");
-  z_call_resolution_free(&resolution);
-  return return_type;
+  return stdlib_fallible_return_type_text(expr, return_type, sizeof(return_type)) ? return_type : NULL;
 }
 
 static bool resolve_choice_constructor_call(const Program *program, const Expr *call, ZCallResolution *out) {
@@ -6247,7 +6252,9 @@ static bool check_expr_expected(CheckContext *ctx, const Program *program, const
       ctx->allow_fallible_call--;
       if (!left_ok) return false;
       const Function *callee = fallible_callee_in_context(ctx, program, ctx ? ctx->function : NULL, scope, expr->left);
-      const char *left_type = callee ? callee->return_type : stdlib_fallible_return_type(expr->left);
+      char stdlib_left_type[160];
+      const char *left_type = callee ? callee->return_type : NULL;
+      if (!left_type && stdlib_fallible_return_type_text(expr->left, stdlib_left_type, sizeof(stdlib_left_type))) left_type = stdlib_left_type;
       if (!left_type) {
         const char *maybe_type = expr_type(ctx, program, expr->left, scope);
         const char *inner = NULL;

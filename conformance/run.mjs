@@ -3248,6 +3248,10 @@ const rescueFallbackTypeMismatch = await execFileAsync(zero, ["check", "conforma
 assert.notEqual(rescueFallbackTypeMismatch.code, 0);
 assert.match(rescueFallbackTypeMismatch.stderr, /TYP003|TYP002/);
 
+const stdFsRescueFallbackTypeOverwrite = await execFileAsync(zero, ["check", "conformance/native/fail/std-fs-rescue-fallback-type-overwrite.0"]).catch((error) => error);
+assert.notEqual(stdFsRescueFallbackTypeOverwrite.code, 0);
+assert.match(stdFsRescueFallbackTypeOverwrite.stderr, /TYP002/);
+
 const constFieldAssignment = await execFileAsync(zero, ["check", "conformance/native/fail/const-field-assignment.0"]).catch((error) => error);
 assert.notEqual(constFieldAssignment.code, 0);
 assert.match(constFieldAssignment.stderr, /TYP009/);
