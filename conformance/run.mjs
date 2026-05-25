@@ -1063,6 +1063,44 @@ await writeFile(arm64NestedDynamicEqlFixture, `export c fn main Bool
 `);
 await assertArm64NestedScratchBlocked(arm64NestedDynamicEqlFixture, /byte-view equality exceeds scratch register spill capacity/, "aarch64-nested-dynamic-eql");
 
+let arm64WorldWriteSliceStart = "(+ start 0_usize)";
+for (let i = 0; i < 31; i++) arm64WorldWriteSliceStart = `(+ 0_usize ${arm64WorldWriteSliceStart})`;
+const arm64WorldWriteFixture = `${outDir}/aarch64-world-write-dynamic-slice-scratch-blocked.0`;
+await writeFile(arm64WorldWriteFixture, `pub fn main Void world World !
+  let text String "abcdef"
+  let start usize 1
+  check world.out.write text[${arm64WorldWriteSliceStart}..6]
+`);
+async function assertArm64WorldWriteScratchBlocked(fixture, expectedMessage, outPrefix) {
+  for (const blocked of [["linux-musl-arm64", "zero-elf-aarch64-exe", "linux"], ["win32-arm64.exe", "zero-coff-aarch64-exe", "coff.exe"]]) {
+    const readiness = await execFileAsync(zero, ["check", "--json", "--emit", "exe", "--target", blocked[0], fixture]);
+    const readinessBody = JSON.parse(readiness.stdout);
+    assert.equal(readinessBody.ok, true);
+    assert.equal(readinessBody.targetReadiness.ok, false);
+    assert.equal(readinessBody.targetReadiness.diagnostics[0].code, "BLD004");
+    assert.equal(readinessBody.targetReadiness.diagnostics[0].backendBlocker.backend, blocked[1]);
+    assert.equal(readinessBody.targetReadiness.diagnostics[0].backendBlocker.stage, "buildability");
+    assert.match(readinessBody.targetReadiness.diagnostics[0].message, expectedMessage);
+    const build = await execFileAsync(zero, ["build", "--json", "--emit", "exe", "--target", blocked[0], fixture, "--out", `${outDir}/${outPrefix}-${blocked[2]}`]).catch((error) => error);
+    assert.notEqual(build.code, 0);
+    const buildDiag = JSON.parse(build.stdout).diagnostics[0];
+    assert.equal(buildDiag.backendBlocker.backend, blocked[1]);
+    assert.equal(buildDiag.backendBlocker.stage, "buildability");
+    assert.match(buildDiag.message, expectedMessage);
+  }
+}
+await assertArm64WorldWriteScratchBlocked(arm64WorldWriteFixture, /expression nesting exceeds scratch register spill capacity/, "aarch64-world-write-dynamic-slice");
+
+let arm64WorldWriteSliceEnd = "(+ end 0_usize)";
+for (let i = 0; i < 32; i++) arm64WorldWriteSliceEnd = `(+ 0_usize ${arm64WorldWriteSliceEnd})`;
+const arm64WorldWriteEndFixture = `${outDir}/aarch64-world-write-dynamic-end-scratch-blocked.0`;
+await writeFile(arm64WorldWriteEndFixture, `pub fn main Void world World !
+  let text String "abcdef"
+  let end usize 6
+  check world.out.write text[1..${arm64WorldWriteSliceEnd}]
+`);
+await assertArm64WorldWriteScratchBlocked(arm64WorldWriteEndFixture, /expression nesting exceeds scratch register spill capacity/, "aarch64-world-write-dynamic-end");
+
 const arm64PrivateHelperObj = `${outDir}/aarch64-private-helper-ignored.o`;
 await execFileAsync(zero, [
   "build",

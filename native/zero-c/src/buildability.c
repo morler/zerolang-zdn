@@ -104,7 +104,7 @@ static bool build_check_instr(const ZBuildability *ctx, const IrFunction *fun, c
     if (!ctx->executable) {
       return z_build_diag(ctx, diag, "direct AArch64 object buildability does not support World write instructions", instr->line, instr->column, "IR_INSTR_WORLD_WRITE");
     }
-    if (instr->value && !z_build_check_aarch64_byte_view(ctx, fun, instr->value, diag)) return false;
+    if (instr->value && !z_build_check_aarch64_world_write_byte_view(ctx, fun, instr->value, diag)) return false;
     if (instr->index && !z_build_check_value(ctx, fun, instr->index, false, 0, diag)) return false;
     return true;
   }

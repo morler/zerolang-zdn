@@ -100,8 +100,12 @@ bool z_build_check_aarch64_byte_view_len(const ZBuildability *ctx, const IrFunct
   return z_build_diag(ctx, diag, "direct AArch64 byte-view length currently requires a literal, constant slice, or byte-view local", view->line, view->column, "unsupported byte view length");
 }
 
-bool z_build_check_aarch64_byte_view(const ZBuildability *ctx, const IrFunction *fun, const IrValue *view, ZDiag *diag) {
-  return build_aarch64_byte_view_ptr(ctx, fun, view, diag) && z_build_check_aarch64_byte_view_len(ctx, fun, view, diag);
+bool z_build_check_aarch64_byte_view(const ZBuildability *ctx, const IrFunction *fun, const IrValue *view, ZDiag *diag) { return build_aarch64_byte_view_ptr(ctx, fun, view, diag) && z_build_check_aarch64_byte_view_len(ctx, fun, view, diag); }
+
+bool z_build_check_aarch64_world_write_byte_view(const ZBuildability *ctx, const IrFunction *fun, const IrValue *view, ZDiag *diag) {
+  if (!z_build_check_aarch64_byte_view(ctx, fun, view, diag)) return false;
+  if (!build_check_aarch64_byte_view_ptr_spill(ctx, fun, view, 0, BUILD_AARCH64_SCRATCH_SLOT_COUNT, "direct AArch64 World write exceeds scratch register spill capacity", diag)) return false;
+  return build_check_aarch64_byte_view_len_spill(ctx, fun, view, 0, BUILD_AARCH64_SCRATCH_SLOT_COUNT, "direct AArch64 World write exceeds scratch register spill capacity", diag);
 }
 
 static bool build_aarch64_byte_operation(const ZBuildability *ctx, const IrFunction *fun, const IrValue *value, unsigned scratch_slot, bool *skip_left, ZDiag *diag) {
