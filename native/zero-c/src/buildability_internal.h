@@ -13,10 +13,7 @@ typedef struct {
   bool executable;
 } ZBuildability;
 
-enum {
-  BUILD_MACHO_SCRATCH_SLOT_COUNT = 32u,
-  BUILD_AARCH64_SCRATCH_SLOT_COUNT = 32u
-};
+enum { BUILD_MACHO_SCRATCH_SLOT_COUNT = 32u, BUILD_AARCH64_SCRATCH_SLOT_COUNT = 32u };
 
 const char *z_build_type_name(IrTypeKind type);
 const char *z_build_value_kind_name(IrValueKind kind);
@@ -34,6 +31,7 @@ bool z_build_check_macho_x64_byte_view(const ZBuildability *ctx, const IrFunctio
 bool z_build_check_aarch64_byte_view_len(const ZBuildability *ctx, const IrFunction *fun, const IrValue *view, ZDiag *diag);
 bool z_build_check_aarch64_byte_view(const ZBuildability *ctx, const IrFunction *fun, const IrValue *view, ZDiag *diag);
 bool z_build_check_aarch64_function_shape(const ZBuildability *ctx, const IrFunction *fun, ZDiag *diag);
+bool z_build_check_value(const ZBuildability *ctx, const IrFunction *fun, const IrValue *value, bool local_set_value, unsigned scratch_slot, ZDiag *diag);
 bool z_build_check_target_value(const ZBuildability *ctx, const IrFunction *fun, const IrValue *value, unsigned scratch_slot, bool *skip_left, unsigned *right_slot, ZDiag *diag);
 unsigned z_build_target_call_arg_slot(const ZBuildability *ctx, const IrValue *value, unsigned scratch_slot);
 

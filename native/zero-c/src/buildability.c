@@ -75,23 +75,23 @@ static bool build_value_supported(const ZBuildability *ctx, const IrValue *value
   return false;
 }
 
-static bool build_check_value(const ZBuildability *ctx, const IrFunction *fun, const IrValue *value, bool local_set_value, unsigned macho_scratch_slot, ZDiag *diag) {
+bool z_build_check_value(const ZBuildability *ctx, const IrFunction *fun, const IrValue *value, bool local_set_value, unsigned scratch_slot, ZDiag *diag) {
   if (!value) return z_build_diag(ctx, diag, "direct backend buildability found a missing expression", 1, 1, "missing expression");
   if (!build_value_supported(ctx, value, local_set_value)) {
     return z_build_diag(ctx, diag, "direct backend buildability does not support this MIR value", value->line, value->column, z_build_value_kind_name(value->kind));
   }
   bool skip_left = false;
-  unsigned right_slot = macho_scratch_slot;
-  if (!z_build_check_target_value(ctx, fun, value, macho_scratch_slot, &skip_left, &right_slot, diag)) return false;
+  unsigned right_slot = scratch_slot;
+  if (!z_build_check_target_value(ctx, fun, value, scratch_slot, &skip_left, &right_slot, diag)) return false;
   if (value->kind == IR_VALUE_LOCAL && fun && value->local_index < fun->local_len && fun->locals[value->local_index].is_array) {
     return z_build_diag(ctx, diag, "direct backend buildability cannot use fixed array locals as scalar values", value->line, value->column, "array local");
   }
-  if (value->index && !build_check_value(ctx, fun, value->index, false, macho_scratch_slot, diag)) return false;
-  if (value->left && !skip_left && !build_check_value(ctx, fun, value->left, false, macho_scratch_slot, diag)) return false;
-  if (value->right && !build_check_value(ctx, fun, value->right, false, right_slot, diag)) return false;
-  unsigned arg_slot = z_build_target_call_arg_slot(ctx, value, macho_scratch_slot);
+  if (value->index && !z_build_check_value(ctx, fun, value->index, false, scratch_slot, diag)) return false;
+  if (value->left && !skip_left && !z_build_check_value(ctx, fun, value->left, false, scratch_slot, diag)) return false;
+  if (value->right && !z_build_check_value(ctx, fun, value->right, false, right_slot, diag)) return false;
+  unsigned arg_slot = z_build_target_call_arg_slot(ctx, value, scratch_slot);
   for (size_t i = 0; i < value->arg_len; i++) {
-    if (!build_check_value(ctx, fun, value->args[i], false, arg_slot, diag)) return false;
+    if (!z_build_check_value(ctx, fun, value->args[i], false, arg_slot, diag)) return false;
   }
   return true;
 }
@@ -105,7 +105,7 @@ static bool build_check_instr(const ZBuildability *ctx, const IrFunction *fun, c
       return z_build_diag(ctx, diag, "direct AArch64 object buildability does not support World write instructions", instr->line, instr->column, "IR_INSTR_WORLD_WRITE");
     }
     if (instr->value && !z_build_check_aarch64_byte_view(ctx, fun, instr->value, diag)) return false;
-    if (instr->index && !build_check_value(ctx, fun, instr->index, false, 0, diag)) return false;
+    if (instr->index && !z_build_check_value(ctx, fun, instr->index, false, 0, diag)) return false;
     return true;
   }
   if (z_build_backend_is_aarch64_direct(ctx->backend) &&
@@ -126,30 +126,30 @@ static bool build_check_instr(const ZBuildability *ctx, const IrFunction *fun, c
       if (z_build_backend_is_aarch64_direct(ctx->backend) && fun && instr->local_index < fun->local_len && fun->locals[instr->local_index].type == IR_TYPE_BYTE_VIEW) {
         if (instr->value && !z_build_check_aarch64_byte_view(ctx, fun, instr->value, diag)) return false;
       }
-      if (instr->value && !build_check_value(ctx, fun, instr->value, true, 0, diag)) return false;
+      if (instr->value && !z_build_check_value(ctx, fun, instr->value, true, 0, diag)) return false;
       return true;
     case IR_INSTR_INDEX_STORE:
     case IR_INSTR_FIELD_STORE: {
-      if (instr->value && !build_check_value(ctx, fun, instr->value, false, 0, diag)) return false;
+      if (instr->value && !z_build_check_value(ctx, fun, instr->value, false, 0, diag)) return false;
       unsigned index_scratch_slot = instr->kind == IR_INSTR_INDEX_STORE && z_build_backend_is_aarch64_direct(ctx->backend) ? 1 : 0;
-      if (instr->index && !build_check_value(ctx, fun, instr->index, false, index_scratch_slot, diag)) return false;
+      if (instr->index && !z_build_check_value(ctx, fun, instr->index, false, index_scratch_slot, diag)) return false;
       return true;
     }
     case IR_INSTR_WORLD_WRITE:
       if (ctx->backend == Z_DIRECT_BACKEND_COFF_X64 && instr->value && !z_build_check_coff_byte_view(ctx, fun, instr->value, diag)) return false;
       if (ctx->backend == Z_DIRECT_BACKEND_MACHO_X64 && instr->value && !z_build_check_macho_x64_byte_view(ctx, fun, instr->value, diag)) return false;
       if (ctx->backend == Z_DIRECT_BACKEND_MACHO64 && instr->value && !z_build_check_macho_byte_view(ctx, fun, instr->value, diag)) return false;
-      if (ctx->backend != Z_DIRECT_BACKEND_COFF_X64 && instr->value && !build_check_value(ctx, fun, instr->value, false, 0, diag)) return false;
-      if (instr->index && !build_check_value(ctx, fun, instr->index, false, 0, diag)) return false;
+      if (ctx->backend != Z_DIRECT_BACKEND_COFF_X64 && instr->value && !z_build_check_value(ctx, fun, instr->value, false, 0, diag)) return false;
+      if (instr->index && !z_build_check_value(ctx, fun, instr->index, false, 0, diag)) return false;
       return true;
     case IR_INSTR_EXPR:
     case IR_INSTR_RETURN:
-      if (instr->value && !build_check_value(ctx, fun, instr->value, false, 0, diag)) return false;
-      if (instr->index && !build_check_value(ctx, fun, instr->index, false, 0, diag)) return false;
+      if (instr->value && !z_build_check_value(ctx, fun, instr->value, false, 0, diag)) return false;
+      if (instr->index && !z_build_check_value(ctx, fun, instr->index, false, 0, diag)) return false;
       return true;
     case IR_INSTR_IF:
     case IR_INSTR_WHILE:
-      if (instr->value && !build_check_value(ctx, fun, instr->value, false, 0, diag)) return false;
+      if (instr->value && !z_build_check_value(ctx, fun, instr->value, false, 0, diag)) return false;
       if (!build_check_instrs(ctx, fun, instr->then_instrs, instr->then_len, diag)) return false;
       return build_check_instrs(ctx, fun, instr->else_instrs, instr->else_len, diag);
     case IR_INSTR_RAISE:

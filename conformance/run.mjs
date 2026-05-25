@@ -1033,6 +1033,16 @@ await writeFile(arm64NestedLenFixture, `export c fn main u32
   ret ${arm64NestedLenExpr}
 `);
 await assertArm64NestedScratchBlocked(arm64NestedLenFixture, /byte-view length exceeds scratch register spill capacity/, "aarch64-nested-len");
+let arm64NestedDynamicStartLenExpr = "((std.mem.len text[(+ start 0_usize)..end]) as u32)";
+for (let i = 0; i < 31; i++) arm64NestedDynamicStartLenExpr = `(+ 0_u32 ${arm64NestedDynamicStartLenExpr})`;
+const arm64NestedDynamicStartLenFixture = `${outDir}/aarch64-nested-dynamic-start-len-scratch-blocked.0`;
+await writeFile(arm64NestedDynamicStartLenFixture, `export c fn main u32
+  let text String "abcdef"
+  let start usize 1
+  let end usize 4
+  ret ${arm64NestedDynamicStartLenExpr}
+`);
+await assertArm64NestedScratchBlocked(arm64NestedDynamicStartLenFixture, /expression nesting exceeds scratch register spill capacity/, "aarch64-nested-dynamic-start-len");
 let arm64NestedEndLenExpr = "((std.mem.len text[1..(+ end 0_usize)]) as u32)";
 for (let i = 0; i < 32; i++) arm64NestedEndLenExpr = `(+ 0_u32 ${arm64NestedEndLenExpr})`;
 const arm64NestedEndLenFixture = `${outDir}/aarch64-nested-end-len-scratch-blocked.0`;
