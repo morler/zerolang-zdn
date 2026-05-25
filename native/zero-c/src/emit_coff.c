@@ -38,6 +38,10 @@ static bool coff_diag_at(ZDiag *diag, const char *message, int line, int column,
 
 static bool coff_type_is_scalar32(IrTypeKind type) { return type == IR_TYPE_BOOL || type == IR_TYPE_U8 || type == IR_TYPE_U16 || type == IR_TYPE_I32 || type == IR_TYPE_U32 || type == IR_TYPE_USIZE; }
 
+static bool coff_type_is_unsigned(IrTypeKind type) {
+  return type == IR_TYPE_BOOL || type == IR_TYPE_U8 || type == IR_TYPE_U16 || type == IR_TYPE_U32 || type == IR_TYPE_USIZE;
+}
+
 static void coff_emit_cast_normalize_rax(ZBuf *text, IrTypeKind target) {
   switch (target) {
     case IR_TYPE_BOOL:
@@ -374,7 +378,8 @@ static bool coff_emit_binary_value(ZBuf *text, const IrFunction *fun, const IrVa
     z_x64_patch_rel32(text, right_true_end, text->len);
     return true;
   }
-  if (value->binary_op != IR_BIN_ADD && value->binary_op != IR_BIN_SUB && value->binary_op != IR_BIN_MUL) {
+  if (value->binary_op != IR_BIN_ADD && value->binary_op != IR_BIN_SUB && value->binary_op != IR_BIN_MUL &&
+      value->binary_op != IR_BIN_DIV && value->binary_op != IR_BIN_MOD) {
     return coff_diag_at(diag, "direct COFF binary operator is unsupported", value->line, value->column, "unsupported operator");
   }
   if (!coff_emit_value(text, fun, value->left, ctx, diag)) return false;
@@ -385,6 +390,7 @@ static bool coff_emit_binary_value(ZBuf *text, const IrFunction *fun, const IrVa
   if (value->binary_op == IR_BIN_ADD) z_x64_emit_add_rax_rcx(text, false);
   else if (value->binary_op == IR_BIN_SUB) z_x64_emit_sub_rax_rcx(text, false);
   else if (value->binary_op == IR_BIN_MUL) z_x64_emit_imul_rax_rcx(text, false);
+  else z_x64_emit_div_rax_rcx(text, false, coff_type_is_unsigned(value->type), value->binary_op == IR_BIN_MOD);
   return true;
 }
 
