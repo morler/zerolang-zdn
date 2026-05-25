@@ -1,0 +1,38 @@
+interface Readable<T: Type>
+  fn read i32 self ref<T>
+
+type Counter
+  value i32
+
+  fn init Self value i32
+    ret Counter . value value
+
+  fn read i32 self ref<Self>
+    ret self.value
+
+  fn bump Void self mutref<Self> amount i32
+    set self.value + self.value amount
+
+choice Event
+  key i32
+  quit
+
+fn add i32 left i32 right i32
+  ret + left right
+
+fn id<T: Type> T value T
+  ret value
+
+fn readValue<T: Readable<T>> i32 value ref<T>
+  ret T.read value
+
+pub fn main Void world World !
+  mut counter Counter Counter.init 41
+  counter.bump 1
+  let total i32 add (id<i32> 40) 2
+  let size usize std.mem.len "zero"
+  let event Event Event.key total
+  let direct i32 Counter.read (&counter)
+  let viaInterface i32 readValue<Counter> (&counter)
+  if && (&& (== total 42) (== size 4)) (&& (== direct 42) (== viaInterface 42))
+    check world.out.write "call resolution inspection ok\n"
