@@ -587,11 +587,11 @@ static bool macho_emit_byte_view_eq_to_reg_at(ZBuf *text, const IrFunction *fun,
   z_aarch64_emit_movz_w(text, reg, 0);
   size_t end_patch = z_aarch64_emit_b_placeholder(text);
   z_aarch64_patch_cond19(text, same_len, text->len);
-  z_aarch64_emit_mov_w(text, 10, 8);
   if (!macho_emit_byte_view_ptr_at(text, fun, value->left, 11, frame_size, scratch_slot + 1, ctx, diag)) return false;
   if (!macho_emit_store_scratch(text, 11, IR_TYPE_U64, scratch_slot + 1, value->left, diag)) return false;
   if (!macho_emit_byte_view_ptr_at(text, fun, value->right, 12, frame_size, scratch_slot + 2, ctx, diag)) return false;
   if (!macho_emit_load_scratch(text, 11, IR_TYPE_U64, scratch_slot + 1, value->left, diag)) return false;
+  if (!macho_emit_load_scratch(text, 10, IR_TYPE_U32, scratch_slot, value->left, diag)) return false;
   z_aarch64_emit_byte_eq_loop(text, reg);
   z_aarch64_patch_branch26(text, end_patch, text->len);
   return true;

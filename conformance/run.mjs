@@ -1052,6 +1052,16 @@ await writeFile(arm64NestedEndLenFixture, `export c fn main u32
   ret ${arm64NestedEndLenExpr}
 `);
 await assertArm64NestedScratchBlocked(arm64NestedEndLenFixture, /byte-view length exceeds scratch register spill capacity/, "aarch64-nested-end-len");
+let arm64NestedDynamicEqlExpr = "(std.mem.eqlBytes text[(+ start (+ 0_usize 0_usize))..end] text[(+ start (+ 0_usize 0_usize))..end])";
+for (let i = 0; i < 29; i++) arm64NestedDynamicEqlExpr = `(== true ${arm64NestedDynamicEqlExpr})`;
+const arm64NestedDynamicEqlFixture = `${outDir}/aarch64-nested-dynamic-eql-scratch-blocked.0`;
+await writeFile(arm64NestedDynamicEqlFixture, `export c fn main Bool
+  let text String "abcdef"
+  let start usize 1
+  let end usize 4
+  ret ${arm64NestedDynamicEqlExpr}
+`);
+await assertArm64NestedScratchBlocked(arm64NestedDynamicEqlFixture, /byte-view equality exceeds scratch register spill capacity/, "aarch64-nested-dynamic-eql");
 
 const arm64PrivateHelperObj = `${outDir}/aarch64-private-helper-ignored.o`;
 await execFileAsync(zero, [

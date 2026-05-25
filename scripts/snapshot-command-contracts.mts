@@ -1272,6 +1272,30 @@ for (const { target, outName, compiler, emissionPath, magic } of directStringEql
   assert(directStringEqlBytes.subarray(0, magic.length).equals(magic));
   assert(directStringEqlBytes.includes(Buffer.from("token")));
 }
+const directArm64DynamicStringEqlSource = join(outDir, "direct-arm64-dynamic-string-eql.0");
+writeFileSync(directArm64DynamicStringEqlSource, `export c fn main u8
+  let text String "token"
+  let start usize 0
+  let end usize 5
+  if std.mem.eqlBytes text[(% start 1_usize)..end] "token"[(% start 1_usize)..end]
+    ret 1_u8
+  ret 0_u8
+`);
+for (const { target, outName, compiler, emissionPath, magic } of [
+  { target: "linux-arm64", outName: "direct-dynamic-string-eql-linux-arm64.o", compiler: "zero-elf-aarch64", emissionPath: "direct-elf-aarch64-object", magic: Buffer.from([0x7f, 0x45, 0x4c, 0x46]) },
+  { target: "darwin-arm64", outName: "direct-dynamic-string-eql-darwin-arm64.o", compiler: "zero-macho64", emissionPath: "direct-macho64-object", magic: Buffer.from([0xcf, 0xfa, 0xed, 0xfe]) },
+  { target: "win32-arm64.exe", outName: "direct-dynamic-string-eql-win-arm64.obj", compiler: "zero-coff-aarch64", emissionPath: "direct-coff-aarch64-object", magic: Buffer.from([0x64, 0xaa]) },
+]) {
+  const directArm64DynamicStringEqlPath = join(outDir, outName);
+  rmSync(directArm64DynamicStringEqlPath, { force: true });
+  const directArm64DynamicStringEqlReport = json(["build", "--json", "--emit", "obj", "--target", target, directArm64DynamicStringEqlSource, "--out", directArm64DynamicStringEqlPath]).body;
+  const directArm64DynamicStringEqlBytes = readFileSync(directArm64DynamicStringEqlPath);
+  assert.equal(directArm64DynamicStringEqlReport.compiler, compiler);
+  assert.equal(directArm64DynamicStringEqlReport.generatedCBytes, 0);
+  assert.equal(directArm64DynamicStringEqlReport.objectBackend.objectEmission.path, emissionPath);
+  assert(directArm64DynamicStringEqlBytes.subarray(0, magic.length).equals(magic));
+  assert(hasAarch64Instruction(directArm64DynamicStringEqlBytes, 0xb94003ea));
+}
 const directByteCopyFillTargets: Array<{ target: string; outName: string; compiler: string; emissionPath: string; magic: Buffer }> = [
   { target: "linux-musl-x64", outName: "direct-byte-copy-fill-linux-musl.o", compiler: "zero-elf64", emissionPath: "direct-elf64-object", magic: Buffer.from([0x7f, 0x45, 0x4c, 0x46]) },
   { target: "linux-x64", outName: "direct-byte-copy-fill-linux-gnu.o", compiler: "zero-elf64", emissionPath: "direct-elf64-object", magic: Buffer.from([0x7f, 0x45, 0x4c, 0x46]) },
