@@ -3206,6 +3206,139 @@ static int print_or_apply_fix_json(const char *path, SourceInput *input, const Z
   return apply && has_edit && !applied ? 1 : 0;
 }
 
+static void print_fix_plan_zdn(const char *path, const ZDiag *diag) {
+  bool has_diag = diag && diag->code != 0;
+  ZBuf buf;
+  zbuf_init(&buf);
+  zbuf_append(&buf, "FixPlanResult\n");
+  zdn_field_int(&buf, "schemaVersion", 1, 1);
+  zdn_field_bool(&buf, "ok", !has_diag, 1);
+  zdn_field_string(&buf, "mode", "plan", 1);
+  zdn_field_bool(&buf, "appliesEdits", false, 1);
+  zdn_field_string(&buf, "input", path ? path : "", 1);
+  zdn_object_start(&buf, "selfHostRepairPolicy", 1);
+  zdn_field_string(&buf, "unsupportedFeatureSafety", "requires-human-review", 2);
+  zdn_field_string(&buf, "compatibilityFallback", "removed", 2);
+  zdn_field_string(&buf, "directFallback", "never-c-bridge", 2);
+  zdn_object_end(&buf, 1);
+  zdn_object_start(&buf, "diagnostics", 1);
+  if (has_diag) {
+    zdn_field_string(&buf, "code", diag_code(diag->code), 2);
+    zdn_field_string(&buf, "message", diag->message, 2);
+    zdn_field_string(&buf, "path", diag->path ? diag->path : path, 2);
+    zdn_field_int(&buf, "line", diag->line, 2);
+    zdn_field_int(&buf, "column", diag->column, 2);
+    zdn_field_int(&buf, "length", diag->length > 0 ? diag->length : 1, 2);
+    zdn_field_string(&buf, "expected", diag->expected, 2);
+    zdn_field_string(&buf, "actual", diag->actual, 2);
+    zdn_field_string(&buf, "help", diag->help, 2);
+    zdn_field_string(&buf, "fixSafety", diag_fix_safety(diag->code), 2);
+    zdn_object_start(&buf, "repair", 2);
+    zdn_field_string(&buf, "id", diag_repair_id(diag->code), 3);
+    zdn_field_string(&buf, "summary", diag_repair_summary(diag->code), 3);
+    zdn_object_end(&buf, 2);
+  }
+  zdn_object_end(&buf, 1);
+  zdn_array_start(&buf, "fixes", 1);
+  if (has_diag) {
+    zbuf_append(&buf, "    Fix\n");
+    zdn_field_string(&buf, "id", diag_repair_id(diag->code), 2);
+    zdn_field_string(&buf, "diagnosticCode", diag_code(diag->code), 2);
+    zdn_field_string(&buf, "safety", diag_fix_safety(diag->code), 2);
+    zdn_field_string(&buf, "summary", diag_repair_summary(diag->code), 2);
+    zdn_field_bool(&buf, "appliesEdits", false, 2);
+  }
+  zdn_array_end(&buf, 1);
+  fputs(buf.data, stdout);
+  zbuf_free(&buf);
+}
+
+static int print_or_apply_fix_zdn(const char *path, SourceInput *input, const ZDiag *diag, bool apply) {
+  bool has_diag = diag && diag->code != 0;
+  bool can_apply = diagnostic_can_apply_edits(diag);
+  const char *edit_path = input ? input->source_file : NULL;
+  const char *edit_source = NULL;
+  char *loaded_edit_source = NULL;
+  if (can_apply && diag && diag->path && diag->path[0]) {
+    edit_path = diag->path;
+  }
+  if (can_apply && edit_path && edit_path[0]) {
+    ZDiag read_diag = {0};
+    loaded_edit_source = z_read_file(edit_path, &read_diag);
+    edit_source = loaded_edit_source;
+  }
+  int edit_line = 0;
+  char *old_line = NULL;
+  char *new_line = NULL;
+  bool has_edit = can_apply && edit_source && find_make_binding_mutable_edit(edit_source, &edit_line, &old_line, &new_line);
+  bool applied = false;
+  if (apply && has_edit) {
+    char *updated = apply_single_line_edit(edit_source, edit_line, new_line);
+    ZDiag write_diag = {0};
+    applied = edit_path && z_write_file(edit_path, updated, &write_diag);
+    free(updated);
+  }
+
+  ZBuf buf;
+  zbuf_init(&buf);
+  zbuf_append(&buf, "FixPatchResult\n");
+  zdn_field_int(&buf, "schemaVersion", 1, 1);
+  zdn_field_bool(&buf, "ok", !has_diag, 1);
+  zdn_field_string(&buf, "mode", apply ? "apply" : "patch", 1);
+  zdn_field_bool(&buf, "appliesEdits", apply, 1);
+  zdn_field_bool(&buf, "applied", applied, 1);
+  zdn_field_string(&buf, "input", path ? path : "", 1);
+  zdn_object_start(&buf, "selfHostRepairPolicy", 1);
+  zdn_field_string(&buf, "unsupportedFeatureSafety", "requires-human-review", 2);
+  zdn_field_string(&buf, "compatibilityFallback", "removed", 2);
+  zdn_field_string(&buf, "directFallback", "never-c-bridge", 2);
+  zdn_object_end(&buf, 1);
+  zdn_object_start(&buf, "diagnostics", 1);
+  if (has_diag) {
+    zdn_field_string(&buf, "code", diag_code(diag->code), 2);
+    zdn_field_string(&buf, "message", diag->message, 2);
+    zdn_field_string(&buf, "path", diag->path ? diag->path : path, 2);
+    zdn_field_int(&buf, "line", diag->line, 2);
+    zdn_field_int(&buf, "column", diag->column, 2);
+    zdn_field_int(&buf, "length", diag->length > 0 ? diag->length : 1, 2);
+    zdn_field_string(&buf, "expected", diag->expected, 2);
+    zdn_field_string(&buf, "actual", diag->actual, 2);
+    zdn_field_string(&buf, "help", diag->help, 2);
+    zdn_field_string(&buf, "fixSafety", diag_fix_safety(diag->code), 2);
+    zdn_object_start(&buf, "repair", 2);
+    zdn_field_string(&buf, "id", diag_repair_id(diag->code), 3);
+    zdn_field_string(&buf, "summary", diag_repair_summary(diag->code), 3);
+    zdn_object_end(&buf, 2);
+  }
+  zdn_object_end(&buf, 1);
+  zdn_array_start(&buf, "fixes", 1);
+  if (has_diag) {
+    zbuf_append(&buf, "    Fix\n");
+    zdn_field_string(&buf, "id", diag_repair_id(diag->code), 2);
+    zdn_field_string(&buf, "diagnosticCode", diag_code(diag->code), 2);
+    zdn_field_string(&buf, "safety", diag_fix_safety(diag->code), 2);
+    zdn_field_string(&buf, "summary", diag_repair_summary(diag->code), 2);
+    zdn_field_bool(&buf, "appliesEdits", has_edit, 2);
+  }
+  zdn_array_end(&buf, 1);
+  zdn_array_start(&buf, "patches", 1);
+  if (has_edit) {
+    zdn_object_start(&buf, "", 2);
+    zdn_field_string(&buf, "path", edit_path, 3);
+    zdn_field_int(&buf, "line", edit_line, 3);
+    zdn_field_string(&buf, "old", old_line, 3);
+    zdn_field_string(&buf, "new", new_line, 3);
+    zdn_object_end(&buf, 2);
+  }
+  zdn_array_end(&buf, 1);
+  fputs(buf.data, stdout);
+  zbuf_free(&buf);
+  free(old_line);
+  free(new_line);
+  free(loaded_edit_source);
+  return apply && has_edit && !applied ? 1 : 0;
+}
+
 static void print_help(void) {
   printf("zero %s native bootstrap\n\n", ZERO_VERSION);
   printf("Usage:\n");
@@ -3228,7 +3361,7 @@ static void print_help(void) {
   printf("  zero time --json|--zdn <file.0|file.row|project|zero.json>\n");
   printf("  zero abi check|dump [--json] [--target <target>] <file.0|file.row|project|zero.json>\n");
   printf("  zero explain [--json] [--zdn] <code>\n");
-  printf("  zero fix --plan --json <file.0|file.row|project|zero.json>\n");
+  printf("  zero fix --plan [--json|--zdn] <file.0|file.row|project|zero.json>\n");
   printf("  zero doctor [--json]\n");
   printf("  zero clean [--all]\n");
   printf("  zero targets\n");
@@ -9614,12 +9747,15 @@ int main(int argc, char **argv) {
   if (!compile_input(command.input, target, &input, &program, &diag)) {
     if (strcmp(command.command, "fix") == 0) {
       if (command.apply || command.patch) {
-        int rc = print_or_apply_fix_json(diag.path ? diag.path : command.input, &input, &diag, command.apply);
+        int rc;
+        if (command.format == FORMAT_ZDN) rc = print_or_apply_fix_zdn(diag.path ? diag.path : command.input, &input, &diag, command.apply);
+        else rc = print_or_apply_fix_json(diag.path ? diag.path : command.input, &input, &diag, command.apply);
         z_free_program(&program);
         z_free_source(&input);
         return rc;
       }
-      print_fix_plan_json(diag.path ? diag.path : command.input, &diag);
+      if (command.format == FORMAT_ZDN) print_fix_plan_zdn(diag.path ? diag.path : command.input, &diag);
+      else print_fix_plan_json(diag.path ? diag.path : command.input, &diag);
       z_free_program(&program);
       z_free_source(&input);
       return 0;
@@ -9634,7 +9770,8 @@ int main(int argc, char **argv) {
   bool is_graph_command = strcmp(command.command, "graph") == 0;
   if (!is_graph_command && !validate_target_capabilities(&program, target, &diag, input.source_file)) {
     if (strcmp(command.command, "fix") == 0) {
-      print_fix_plan_json(input.source_file, &diag);
+      if (command.format == FORMAT_ZDN) print_fix_plan_zdn(input.source_file, &diag);
+      else print_fix_plan_json(input.source_file, &diag);
       z_free_program(&program);
       z_free_source(&input);
       return 0;
@@ -9664,8 +9801,13 @@ int main(int argc, char **argv) {
   }
 
   if (strcmp(command.command, "fix") == 0) {
-    if (command.apply || command.patch) print_or_apply_fix_json(input.source_file, &input, NULL, command.apply);
-    else print_fix_plan_json(input.source_file, NULL);
+    if (command.apply || command.patch) {
+      if (command.format == FORMAT_ZDN) print_or_apply_fix_zdn(input.source_file, &input, NULL, command.apply);
+      else print_or_apply_fix_json(input.source_file, &input, NULL, command.apply);
+    } else {
+      if (command.format == FORMAT_ZDN) print_fix_plan_zdn(input.source_file, NULL);
+      else print_fix_plan_json(input.source_file, NULL);
+    }
     z_free_program(&program);
     z_free_source(&input);
     return 0;

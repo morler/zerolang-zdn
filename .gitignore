@@ -6,6 +6,10 @@ dist/
 node_modules/
 npm-debug.log*
 
+# reasonix tooling
+.reasonix/
+REASONIX.md
+
 # environment variables
 .env*
 !.env.example

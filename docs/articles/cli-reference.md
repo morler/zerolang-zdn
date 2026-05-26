@@ -116,6 +116,7 @@ the same output. Supported across all commands that accept
 | `zero parse --zdn`   | `ParseResult`    |
 | `zero graph --zdn`   | `GraphResult`    |
 | `zero explain --zdn` | `ExplainResult`  |
+| `zero fix --plan --zdn` | `FixPlanResult`  |
 
 Example output:
 
@@ -198,7 +199,7 @@ zero graph [dump|validate] [--json] [--zdn] [--target <target>] [--out <file>] <
 zero doc [--json] [--zdn] [--target <target>] <input>
 zero size [--json] [--zdn] [--target <target>] [--out <artifact>] <input>
 zero explain [--json] [--zdn] <diagnostic-code>
-zero fix --plan --json [--target <target>] <input>
+zero fix --plan [--json] [--zdn] [--target <target>] <input>
 zero targets
 zero clean [--all]
 zero mem [--json] [--zdn] [--target <target>] <input>

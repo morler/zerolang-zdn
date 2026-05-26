@@ -304,6 +304,16 @@ describe("native zero CLI", () => {
     assert.ok(testPass.stdout.includes("TestResult"), `expected TestResult in:\n${testPass.stdout}`);
     assert.ok(testPass.stdout.includes("ok true"), `expected ok true in:\n${testPass.stdout}`);
 
+    // fix --plan --zdn (success)
+    const fixOk = await runZero(["fix", "--plan", "--zdn", "examples/add.0"]);
+    assert.ok(fixOk.stdout.includes("FixPlanResult"), `expected FixPlanResult in:\n${fixOk.stdout}`);
+    assert.ok(fixOk.stdout.includes("ok true"), `expected ok true in:\n${fixOk.stdout}`);
+
+    // fix --plan --zdn (with diagnostic)
+    const fixDiag = await runZero(["fix", "--plan", "--zdn", "examples/does-not-exist.0"]).catch((error) => error);
+    assert.ok(fixDiag.stdout.includes("FixPlanResult"), `expected FixPlanResult in:\n${fixDiag.stdout}`);
+    assert.ok(fixDiag.stdout.includes("ok false"), `expected ok false in:\n${fixDiag.stdout}`);
+
     // explain --zdn
     const explain = await runZero(["explain", "--zdn", "TAR001"]);
     assert.ok(explain.stdout.includes("ExplainResult"), `expected ExplainResult in:\n${explain.stdout}`);

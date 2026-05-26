@@ -3810,6 +3810,12 @@ for (const [fixture, name, zdnCommand, expectedPatterns] of [
   assert.ok(result.stdout.includes("ok true"), `expected ok true in:\n${result.stdout}`);
 }
 
+// fix --plan --zdn
+{
+  const result = await execFileAsync(zero, ["fix", "--plan", "--zdn", "examples/point.0"]);
+  assert.ok(result.stdout.includes("FixPlanResult"), `expected FixPlanResult in:\n${result.stdout}`);
+}
+
 // explain with --zdn
 {
   const result = await execFileAsync(zero, ["explain", "--zdn", "TAR001"]);
