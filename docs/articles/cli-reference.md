@@ -37,6 +37,11 @@ zero graph --json examples/systems-package
 zero graph dump examples/hello.0
 zero graph dump --out .zero/out/hello.graph examples/hello.0
 zero graph validate .zero/out/hello.graph
+zero graph view .zero/out/hello.graph
+zero graph check --json .zero/out/hello.graph
+zero graph patch --out .zero/out/hello.patched.graph .zero/out/hello.graph .zero/out/hello.patch
+zero graph roundtrip examples/hello.0
+zero graph roundtrip .zero/out/hello.graph
 zero size --json examples/point.0
 zero ship --json --target linux-musl-x64 examples/hello.0 --out .zero/ship/hello
 zero doctor --json
@@ -63,6 +68,10 @@ Use `--json` when another tool will read the result. Text output is for people.
 | `zero graph --json` | Modules, public symbols, capabilities, static facts, helper use, and nested `programGraph`. |
 | `zero graph dump --json` | The bare deterministic ProgramGraph with `moduleIdentity`, `graphHash`, validation, counts, nodes, and edges. Use `--out <file>` to write the dump artifact. |
 | `zero graph validate --json` | A ProgramGraph artifact readback check with `moduleIdentity`, `graphHash`, counts, validation state, and optional canonical output path. |
+| `zero graph view --json` | A generated Zero-shaped view for a ProgramGraph artifact with `moduleIdentity`, `graphHash`, `canonicalSource: false`, and optional output path. |
+| `zero graph check --json` | Typecheck a ProgramGraph artifact through direct graph lowering with artifact identity, target, `check.lowering: "direct-program-graph"`, target readiness, diagnostics, optional generated-view output path, and an inline failed view when no output path was saved. |
+| `zero graph patch --json` | Checked ProgramGraph artifact edits with graph-hash preconditions, per-operation node/field results, the changed graph hash, and optional canonical output path. |
+| `zero graph roundtrip --json` | Source-to-graph-to-view or artifact-to-direct-lower stability with `semanticStable`, lowering mode, original and reparsed graph hashes, raw counts, normalized semantic counts, and optional output. |
 | `zero dev --json` | A watch plan for changed source, manifest, package-lock, and generated-binding inputs. |
 | `zero dev --json --trace` | Adds phase timing, cache hit/miss facts, diagnostics passthrough, and `interfaceFingerprints`. |
 | `zero time --json` | Compiler phase timing plus `interfaceFingerprints` and incremental invalidation facts. |
@@ -138,6 +147,30 @@ CheckResult
   diagnostics
 ```
 
+## ProgramGraph Patches
+
+`zero graph patch` applies checked edits to a saved ProgramGraph artifact and
+prints or writes the canonical patched artifact. Patch files are line-oriented
+text:
+
+```text
+zero-program-graph-patch v1
+expect graphHash "graph:f76987e99677f1b3"
+set node="node:000013" field="value" expect="hello from zero\n" value="hello patched\n"
+```
+
+The header is required. `expect graphHash` is optional but recommended; it
+rejects edits against a different artifact. `set` requires `node`, `field`, and
+`value`; `expect` is optional and rejects the operation when the current field
+value differs.
+
+Editable fields are `name`, `type`, `value`, `public`, `mutable`, `static`,
+`fallible`, and `exportC`. Boolean fields accept only `true` or `false`.
+`name` values must be identifier paths or supported operator tokens. `type`
+values must be valid Zero type syntax. Strings support `\\`, `\"`, `\n`,
+`\r`, `\t`, and `\u00XX` escapes for non-NUL bytes. NUL bytes are not valid
+ProgramGraph patch text.
+
 ## Build Outputs
 
 | Emit mode | Command |
@@ -199,7 +232,7 @@ zero build [--emit exe|obj] [--target <target>] [--profile dev|release] [--out <
 zero ship [--json] [--zdn] [--target <target>] [--profile release-small|tiny|audit] [--out <file>] <input>
 zero test [--json] [--zdn] [--filter <name>] [--target <target>] [--cc <path>] [--out <file>] <input>
 zero fmt [--check] <input>
-zero graph [dump|validate] [--json] [--zdn] [--target <target>] [--out <file>] <input>
+zero graph [dump|validate|view|check|patch|roundtrip] [--json] [--zdn] [--target <target>] [--out <file>] <input> [patch-file]
 zero doc [--json] [--zdn] [--target <target>] <input>
 zero size [--json] [--zdn] [--target <target>] [--out <artifact>] <input>
 zero explain [--json] [--zdn] <diagnostic-code>
