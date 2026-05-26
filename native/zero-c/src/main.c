@@ -9213,6 +9213,14 @@ static void append_graph_saved_json(ZBuf *buf, const char *path) {
   }
 }
 
+static const char *graph_check_generated_view_path(void) {
+  return "<generated-graph-view>";
+}
+
+static const char *graph_check_diagnostic_path(const Command *command) {
+  return command && command->out ? command->out : graph_check_generated_view_path();
+}
+
 static void append_graph_check_json(
   ZBuf *buf,
   const Command *command,
@@ -9220,7 +9228,8 @@ static void append_graph_check_json(
   const ZProgramGraph *graph,
   bool ok,
   const ZDiag *diag,
-  const char *phase
+  const char *phase,
+  const char *view
 ) {
   zbuf_append(buf, "{\n  \"schemaVersion\": 1,\n  \"ok\": ");
   zbuf_append(buf, ok ? "true" : "false");
@@ -9239,9 +9248,12 @@ static void append_graph_check_json(
   zbuf_append(buf, ", \"sourcePath\": ");
   append_json_nullable_string(buf, command->out);
   zbuf_append(buf, "},\n  \"diagnostics\": [");
-  if (!ok && diag) append_fix_plan_diagnostic(buf, command->out ? command->out : command->input, diag);
+  if (!ok && diag) append_fix_plan_diagnostic(buf, graph_check_diagnostic_path(command), diag);
   zbuf_append(buf, "],\n  \"saved\": ");
   append_graph_saved_json(buf, command->out);
+  zbuf_append(buf, ",\n  \"view\": ");
+  if (!ok && !command->out) append_json_string(buf, view ? view : "");
+  else zbuf_append(buf, "null");
   zbuf_append(buf, "\n}\n");
 }
 
@@ -9567,7 +9579,7 @@ static void graph_roundtrip_cleanup(const char *path, const char *dir) {
 
 static void graph_check_relabel_diag_path(const Command *command, ZDiag *diag) {
   if (!diag) return;
-  const char *path = command && command->out ? command->out : (command ? command->input : diag->path);
+  const char *path = graph_check_diagnostic_path(command);
   diag->path = path;
   for (size_t i = 0; i < diag->borrow_trace_count; i++) {
     if (diag->borrow_traces[i].binding_decl_path) diag->borrow_traces[i].binding_decl_path = path;
@@ -9628,7 +9640,7 @@ static int run_graph_check_command(const Command *command, const ZTargetInfo *ta
   if (command->json) {
     ZBuf json;
     zbuf_init(&json);
-    append_graph_check_json(&json, command, target, &graph, ok, ok ? NULL : diag, phase);
+    append_graph_check_json(&json, command, target, &graph, ok, ok ? NULL : diag, phase, view.data ? view.data : "");
     fputs(json.data, stdout);
     zbuf_free(&json);
   } else if (ok) {
