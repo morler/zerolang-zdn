@@ -3219,7 +3219,7 @@ static void print_help(void) {
   printf("  zero ship [--json] [--target <target>] [--profile release-small|tiny|audit] [--out <file>] <file.0|file.row|project|zero.json>\n");
   printf("  zero tokens --json <file.0|file.row|project|zero.json>\n");
   printf("  zero parse --json <file.0|file.row|project|zero.json>\n");
-  printf("  zero graph [dump|validate|view|patch|roundtrip] [--json] [--out <file>] <file.0|file.row|project|zero.json|graph-artifact> [patch-file]\n");
+  printf("  zero graph [dump|validate|view|check|patch|roundtrip] [--json] [--out <file>] <file.0|file.row|project|zero.json|graph-artifact> [patch-file]\n");
   printf("  zero doc [--json] <file.0|file.row|project|zero.json>\n");
   printf("  zero size [--json] [--out <artifact>] <file.0|file.row|project|zero.json>\n");
   printf("  zero mem [--json] [--target <target>] <file.0|file.row|project|zero.json>\n");
@@ -3297,12 +3297,13 @@ static void print_command_help(const char *command) {
     printf("Usage: zero abi check|dump [--json] [--target <target>] <file.0|file.row|project|zero.json>\n\n");
     printf("Check ABI-safe declarations or dump target-aware source layout facts.\n");
   } else if (strcmp(command, "graph") == 0) {
-    printf("Usage: zero graph [dump|validate|view|patch|roundtrip] [--json] [--target <target>] [--out <file>] <file.0|file.row|project|zero.json|graph-artifact> [patch-file]\n\n");
+    printf("Usage: zero graph [dump|validate|view|check|patch|roundtrip] [--json] [--target <target>] [--out <file>] <file.0|file.row|project|zero.json|graph-artifact> [patch-file]\n\n");
     printf("Inspect modules, symbols, capabilities, static metadata, stdlib helpers, or deterministic ProgramGraph artifacts.\n\n");
     printf("Subcommands:\n");
     printf("  dump      print or write only the deterministic ProgramGraph\n");
     printf("  validate  read a ProgramGraph artifact and optionally write its canonical form\n");
     printf("  view      render a ProgramGraph artifact as a generated Zero view\n");
+    printf("  check     typecheck a ProgramGraph artifact through its generated view\n");
     printf("  patch     apply checked edits to a ProgramGraph artifact\n");
     printf("  roundtrip compare source graph semantics after generated-view reparse\n");
   } else if (strcmp(command, "doc") == 0) {
@@ -3444,7 +3445,7 @@ static bool parse_command(int argc, char **argv, Command *command) {
     command->kind = argv[2];
     arg_start = 3;
   }
-  if (is_graph_command && argc >= 3 && (strcmp(argv[2], "dump") == 0 || strcmp(argv[2], "validate") == 0 || strcmp(argv[2], "view") == 0 || strcmp(argv[2], "patch") == 0 || strcmp(argv[2], "roundtrip") == 0)) {
+  if (is_graph_command && argc >= 3 && (strcmp(argv[2], "dump") == 0 || strcmp(argv[2], "validate") == 0 || strcmp(argv[2], "view") == 0 || strcmp(argv[2], "check") == 0 || strcmp(argv[2], "patch") == 0 || strcmp(argv[2], "roundtrip") == 0)) {
     command->kind = argv[2];
     arg_start = 3;
   }
@@ -9202,6 +9203,48 @@ static void append_graph_view_json(ZBuf *buf, const Command *command, const ZPro
   zbuf_append(buf, "\n}\n");
 }
 
+static void append_graph_saved_json(ZBuf *buf, const char *path) {
+  if (path) {
+    zbuf_append(buf, "{\"path\": ");
+    append_json_string(buf, path);
+    zbuf_append(buf, ", \"byteStable\": true}");
+  } else {
+    zbuf_append(buf, "null");
+  }
+}
+
+static void append_graph_check_json(
+  ZBuf *buf,
+  const Command *command,
+  const ZTargetInfo *target,
+  const ZProgramGraph *graph,
+  bool ok,
+  const ZDiag *diag,
+  const char *phase
+) {
+  zbuf_append(buf, "{\n  \"schemaVersion\": 1,\n  \"ok\": ");
+  zbuf_append(buf, ok ? "true" : "false");
+  zbuf_append(buf, ",\n  \"artifact\": ");
+  append_json_string(buf, command->input);
+  zbuf_append(buf, ",\n  \"canonicalSource\": false,\n  \"moduleIdentity\": ");
+  append_json_string(buf, graph ? graph->module_identity : "");
+  zbuf_append(buf, ",\n  \"graphHash\": ");
+  append_json_string(buf, graph ? graph->graph_hash : "");
+  zbuf_append(buf, ",\n  \"check\": {\"ok\": ");
+  zbuf_append(buf, ok ? "true" : "false");
+  zbuf_append(buf, ", \"phase\": ");
+  append_json_string(buf, phase ? phase : (ok ? "typecheck" : "unknown"));
+  zbuf_append(buf, ", \"target\": ");
+  append_json_string(buf, target && target->name ? target->name : "unknown");
+  zbuf_append(buf, ", \"sourcePath\": ");
+  append_json_nullable_string(buf, command->out);
+  zbuf_append(buf, "},\n  \"diagnostics\": [");
+  if (!ok && diag) append_fix_plan_diagnostic(buf, command->out ? command->out : command->input, diag);
+  zbuf_append(buf, "],\n  \"saved\": ");
+  append_graph_saved_json(buf, command->out);
+  zbuf_append(buf, "\n}\n");
+}
+
 static void append_graph_patch_diagnostic_json(ZBuf *buf, const ZProgramGraphPatchResult *result) {
   zbuf_append(buf, "{\"code\": ");
   append_json_string(buf, result ? result->code : "GPH000");
@@ -9477,12 +9520,32 @@ static int run_graph_patch_command(const Command *command, ZDiag *diag) {
   return ok ? 0 : 1;
 }
 
-static long graph_roundtrip_process_id(void) {
+static long graph_process_id(void) {
 #if defined(_WIN32)
   return (long)_getpid();
 #else
   return (long)getpid();
 #endif
+}
+
+static bool graph_temp_path(const char *purpose, const char *basename, ZBuf *dir, ZBuf *path, ZDiag *diag) {
+  zbuf_init(dir);
+  zbuf_init(path);
+  zbuf_appendf(dir, "/tmp/zero-graph-%s-%ld", purpose && purpose[0] ? purpose : "work", graph_process_id());
+  if (zero_mkdir(dir->data) != 0 && errno != EEXIST) {
+    diag->code = 2002;
+    diag->path = dir->data;
+    diag->line = 1;
+    diag->column = 1;
+    diag->length = 1;
+    snprintf(diag->message, sizeof(diag->message), "failed to create graph working directory '%s': %s", dir->data, strerror(errno));
+    snprintf(diag->help, sizeof(diag->help), "choose a writable /tmp directory");
+    return false;
+  }
+  zbuf_append(path, dir->data);
+  zbuf_append_char(path, '/');
+  zbuf_append(path, basename && basename[0] ? basename : "graph-view.0");
+  return true;
 }
 
 static const char *graph_roundtrip_basename(const char *path) {
@@ -9494,28 +9557,90 @@ static const char *graph_roundtrip_basename(const char *path) {
 }
 
 static bool graph_roundtrip_temp_path(const SourceInput *input, ZBuf *dir, ZBuf *path, ZDiag *diag) {
-  zbuf_init(dir);
-  zbuf_init(path);
-  zbuf_appendf(dir, "/tmp/zero-graph-roundtrip-%ld", graph_roundtrip_process_id());
-  if (zero_mkdir(dir->data) != 0 && errno != EEXIST) {
-    diag->code = 2002;
-    diag->path = dir->data;
-    diag->line = 1;
-    diag->column = 1;
-    diag->length = 1;
-    snprintf(diag->message, sizeof(diag->message), "failed to create graph roundtrip directory '%s': %s", dir->data, strerror(errno));
-    snprintf(diag->help, sizeof(diag->help), "choose a writable /tmp directory");
-    return false;
-  }
-  zbuf_append(path, dir->data);
-  zbuf_append_char(path, '/');
-  zbuf_append(path, graph_roundtrip_basename(input ? input->source_file : NULL));
-  return true;
+  return graph_temp_path("roundtrip", graph_roundtrip_basename(input ? input->source_file : NULL), dir, path, diag);
 }
 
 static void graph_roundtrip_cleanup(const char *path, const char *dir) {
   if (path && path[0]) remove(path);
   if (dir && dir[0]) rmdir(dir);
+}
+
+static void graph_check_relabel_diag_path(const Command *command, ZDiag *diag) {
+  if (!diag) return;
+  diag->path = command && command->out ? command->out : (command ? command->input : diag->path);
+  if (!diag->help[0] && command && !command->out) {
+    snprintf(diag->help, sizeof(diag->help), "run zero graph view --out <file.0> %s to inspect the generated source", command->input ? command->input : "<graph-artifact>");
+  }
+}
+
+static int run_graph_check_command(const Command *command, const ZTargetInfo *target, ZDiag *diag) {
+  ZProgramGraph graph;
+  if (!z_program_graph_load(command->input, &graph, diag)) {
+    if (command->json) print_diag_json(diag->path ? diag->path : command->input, diag);
+    else print_diag(diag->path ? diag->path : command->input, diag);
+    return 1;
+  }
+
+  ZBuf view;
+  ZBuf temp_dir;
+  ZBuf temp_path;
+  zbuf_init(&view);
+  zbuf_init(&temp_dir);
+  zbuf_init(&temp_path);
+  z_program_graph_append_view(&view, &graph);
+
+  if (command->out && !z_write_file(command->out, view.data ? view.data : "", diag)) {
+    if (command->json) print_diag_json(diag->path ? diag->path : command->out, diag);
+    else print_diag(diag->path ? diag->path : command->out, diag);
+    zbuf_free(&view);
+    zbuf_free(&temp_dir);
+    zbuf_free(&temp_path);
+    z_program_graph_free(&graph);
+    return 1;
+  }
+
+  if (!graph_temp_path("check", "graph-check.0", &temp_dir, &temp_path, diag) ||
+      !z_write_file(temp_path.data, view.data ? view.data : "", diag)) {
+    if (command->json) print_diag_json(diag->path ? diag->path : (temp_path.data ? temp_path.data : command->input), diag);
+    else print_diag(diag->path ? diag->path : (temp_path.data ? temp_path.data : command->input), diag);
+    graph_roundtrip_cleanup(temp_path.data, temp_dir.data);
+    zbuf_free(&view);
+    zbuf_free(&temp_dir);
+    zbuf_free(&temp_path);
+    z_program_graph_free(&graph);
+    return 1;
+  }
+
+  SourceInput checked_input = {0};
+  Program checked_program = {0};
+  const char *phase = "typecheck";
+  bool ok = compile_input(temp_path.data, target, &checked_input, &checked_program, diag);
+  if (ok && !validate_target_capabilities(&checked_program, target, diag, checked_input.source_file)) {
+    phase = "target-readiness";
+    ok = false;
+  }
+  if (!ok) graph_check_relabel_diag_path(command, diag);
+
+  if (command->json) {
+    ZBuf json;
+    zbuf_init(&json);
+    append_graph_check_json(&json, command, target, &graph, ok, ok ? NULL : diag, phase);
+    fputs(json.data, stdout);
+    zbuf_free(&json);
+  } else if (ok) {
+    printf("program graph check ok\n");
+  } else {
+    print_diag(diag->path ? diag->path : command->input, diag);
+  }
+
+  graph_roundtrip_cleanup(temp_path.data, temp_dir.data);
+  z_free_program(&checked_program);
+  z_free_source(&checked_input);
+  zbuf_free(&view);
+  zbuf_free(&temp_dir);
+  zbuf_free(&temp_path);
+  z_program_graph_free(&graph);
+  return ok ? 0 : 1;
 }
 
 static void graph_roundtrip_replace_path(char **slot, const char *old_path, const char *new_path) {
@@ -9925,6 +10050,9 @@ int main(int argc, char **argv) {
   }
   if (strcmp(command.command, "graph") == 0 && command.kind && strcmp(command.kind, "view") == 0) {
     return run_graph_view_command(&command, &diag);
+  }
+  if (strcmp(command.command, "graph") == 0 && command.kind && strcmp(command.kind, "check") == 0) {
+    return run_graph_check_command(&command, target, &diag);
   }
   if (strcmp(command.command, "graph") == 0 && command.kind && strcmp(command.kind, "patch") == 0) {
     return run_graph_patch_command(&command, &diag);

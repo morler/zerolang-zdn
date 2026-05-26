@@ -328,9 +328,12 @@ assert.match(graphDumpJson.graphHash, /^graph:[0-9a-f]{16}$/);
 const graphDumpPath = join(outDir, "hello.program-graph");
 const graphCanonicalPath = join(outDir, "hello.canonical.program-graph");
 const graphViewPath = join(outDir, "hello.program-graph.0");
+const graphCheckViewPath = join(outDir, "hello.checked.program-graph.0");
 const graphRoundtripViewPath = join(outDir, "hello.roundtrip.0");
 const graphPatchPath = join(outDir, "hello.program-graph.patch");
 const graphPatchedPath = join(outDir, "hello.patched.program-graph");
+const graphUncheckedPatchPath = join(outDir, "hello.unchecked.program-graph.patch");
+const graphUncheckedPath = join(outDir, "hello.unchecked.program-graph");
 const graphPatchEmptyPath = join(outDir, "hello.empty.program-graph.patch");
 const graphPatchControlPath = join(outDir, "hello.control.program-graph.patch");
 const graphPatchHighBytePath = join(outDir, "hello.high-byte.program-graph.patch");
@@ -348,9 +351,12 @@ const graphSparseArgPath = join(outDir, "hello.sparse-arg.program-graph");
 rmSync(graphDumpPath, { force: true });
 rmSync(graphCanonicalPath, { force: true });
 rmSync(graphViewPath, { force: true });
+rmSync(graphCheckViewPath, { force: true });
 rmSync(graphRoundtripViewPath, { force: true });
 rmSync(graphPatchPath, { force: true });
 rmSync(graphPatchedPath, { force: true });
+rmSync(graphUncheckedPatchPath, { force: true });
+rmSync(graphUncheckedPath, { force: true });
 rmSync(graphPatchEmptyPath, { force: true });
 rmSync(graphPatchControlPath, { force: true });
 rmSync(graphPatchHighBytePath, { force: true });
@@ -396,6 +402,23 @@ assert.equal(graphViewOutJson.ok, true);
 assert.equal(graphViewOutJson.saved.path, graphViewPath);
 assert.equal(graphViewOutJson.view, null);
 assert.equal(readFileSync(graphViewPath, "utf8"), graphView);
+assert.equal(zero(["graph", "check", graphDumpPath]).stdout, "program graph check ok\n");
+const graphCheckJson = json(["graph", "check", "--json", graphDumpPath]).body;
+assert.equal(graphCheckJson.ok, true);
+assert.equal(graphCheckJson.canonicalSource, false);
+assert.equal(graphCheckJson.moduleIdentity, "module:hello");
+assert.equal(graphCheckJson.graphHash, graphDumpJson.graphHash);
+assert.equal(graphCheckJson.check.ok, true);
+assert.equal(graphCheckJson.check.phase, "typecheck");
+assert.match(graphCheckJson.check.target, /^(darwin|linux|win32)-/);
+assert.equal(graphCheckJson.check.sourcePath, null);
+assert.deepEqual(graphCheckJson.diagnostics, []);
+assert.equal(graphCheckJson.saved, null);
+const graphCheckOutJson = json(["graph", "check", "--json", "--out", graphCheckViewPath, graphDumpPath]).body;
+assert.equal(graphCheckOutJson.ok, true);
+assert.equal(graphCheckOutJson.saved.path, graphCheckViewPath);
+assert.equal(graphCheckOutJson.check.sourcePath, graphCheckViewPath);
+assert.equal(readFileSync(graphCheckViewPath, "utf8"), graphView);
 writeFileSync(graphPatchPath, [
   "zero-program-graph-patch v1",
   `expect graphHash "${graphDumpJson.graphHash}"`,
@@ -424,6 +447,24 @@ assert.equal(graphPatchJson.diagnostic, null);
 assert.equal(graphPatchJson.saved.path, graphPatchedPath);
 assert.equal(zero(["graph", "validate", graphPatchedPath]).stdout, "program graph ok\n");
 assert.match(zero(["graph", "view", graphPatchedPath]).stdout, /check world\.out\.write "hello patched\\n"/);
+assert.equal(zero(["graph", "check", graphPatchedPath]).stdout, "program graph check ok\n");
+writeFileSync(graphUncheckedPatchPath, [
+  "zero-program-graph-patch v1",
+  `expect graphHash "${graphDumpJson.graphHash}"`,
+  `set node="node:000002" field="type" expect="Void" value="u32"`,
+  "",
+].join("\n"));
+assert.equal(zero(["graph", "patch", "--out", graphUncheckedPath, graphDumpPath, graphUncheckedPatchPath]).stdout, "program graph patch ok\n");
+const graphUnchecked = json(["graph", "check", "--json", "--out", graphCheckViewPath, graphUncheckedPath], { allowFailure: true });
+assert.notEqual(graphUnchecked.code, 0);
+assert.equal(graphUnchecked.body.ok, false);
+assert.equal(graphUnchecked.body.canonicalSource, false);
+assert.equal(graphUnchecked.body.check.ok, false);
+assert.equal(graphUnchecked.body.check.phase, "typecheck");
+assert.equal(graphUnchecked.body.check.sourcePath, graphCheckViewPath);
+assert.equal(graphUnchecked.body.saved.path, graphCheckViewPath);
+assert(graphUnchecked.body.diagnostics.length > 0);
+assert.equal(graphUnchecked.body.diagnostics[0].path, graphCheckViewPath);
 writeFileSync(graphPatchEmptyPath, [
   "zero-program-graph-patch v1",
   `expect graphHash "${graphDumpJson.graphHash}"`,
