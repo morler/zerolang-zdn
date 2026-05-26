@@ -158,8 +158,46 @@ static void expect_lowered_program(void) {
   z_program_graph_free(&graph);
 }
 
+static void expect_import_lowering_failure(const char *module, const char *alias, const char *message) {
+  ZProgramGraph graph;
+  z_program_graph_init(&graph);
+  graph.nodes = z_checked_calloc(4, sizeof(ZProgramGraphNode));
+  graph.node_len = 4;
+  graph.node_cap = 4;
+  set_node(&graph.nodes[0], "node:000001", Z_PROGRAM_GRAPH_NODE_MODULE, "smoke", NULL);
+  set_node(&graph.nodes[1], "node:000002", Z_PROGRAM_GRAPH_NODE_IMPORT, module, NULL);
+  graph.nodes[1].value = alias ? z_strdup(alias) : NULL;
+  set_node(&graph.nodes[2], "node:000003", Z_PROGRAM_GRAPH_NODE_FUNCTION, "main", "Void");
+  graph.nodes[2].is_public = true;
+  set_node(&graph.nodes[3], "node:000004", Z_PROGRAM_GRAPH_NODE_BLOCK, "body", NULL);
+  graph.edges = z_checked_calloc(3, sizeof(ZProgramGraphEdge));
+  graph.edge_len = 3;
+  graph.edge_cap = 3;
+  set_edge(&graph.edges[0], "node:000001", "node:000002", "import", Z_PROGRAM_GRAPH_EDGE_TARGET_NODE, 0);
+  set_edge(&graph.edges[1], "node:000001", "node:000003", "function", Z_PROGRAM_GRAPH_EDGE_TARGET_NODE, 0);
+  set_edge(&graph.edges[2], "node:000003", "node:000004", "body", Z_PROGRAM_GRAPH_EDGE_TARGET_NODE, 0);
+  z_program_graph_finalize_identities(&graph);
+
+  ZProgramGraphValidation validation = {0};
+  expect(z_program_graph_validate(&graph, &validation), "invalid import test graph should remain shape-valid");
+  Program program = {0};
+  ZDiag diag = {0};
+  expect(!z_program_graph_lower_to_program(&graph, &program, &diag), "invalid import graph lowered successfully");
+  expect(strstr(diag.message, message) != NULL, "invalid import graph reported wrong diagnostic");
+  z_program_graph_free(&graph);
+}
+
+static void expect_lower_rejects_bad_imports(void) {
+  expect_import_lowering_failure("+", NULL, "import module");
+  expect_import_lowering_failure("pub", NULL, "import module");
+  expect_import_lowering_failure("missing", NULL, "target module is missing");
+  expect_import_lowering_failure("std.mem", "+", "import alias");
+  expect_import_lowering_failure("std.mem", "pub", "import alias");
+}
+
 int main(void) {
   expect_lowered_program();
+  expect_lower_rejects_bad_imports();
 
   ZProgramGraph graph;
   z_program_graph_init(&graph);

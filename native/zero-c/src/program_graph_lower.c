@@ -194,6 +194,72 @@ static bool lower_starts_with(const char *text, const char *prefix) {
   return strncmp(text, prefix, len) == 0;
 }
 
+static bool lower_identifier_start(char ch) {
+  return isalpha((unsigned char)ch) || ch == '_';
+}
+
+static bool lower_identifier_part(char ch) {
+  return isalnum((unsigned char)ch) || ch == '_';
+}
+
+static bool lower_text_span_eq(const char *start, const char *end, const char *text) {
+  if (!start || !end || !text) return false;
+  while (start < end && *text) {
+    if (*start++ != *text++) return false;
+  }
+  return start == end && *text == '\0';
+}
+
+static bool lower_reserved_word_span(const char *start, const char *end) {
+  const char *keywords[] = {
+    "as", "break", "check", "choice", "const", "continue", "defer", "else", "enum", "export", "extern", "false",
+    "fn", "for", "fun", "if", "import", "in", "let", "match", "meta", "mut", "null", "packed", "pub",
+    "raise", "raises", "rescue", "ret", "return", "shape", "static", "test", "true", "type",
+    "use", "var", "while", NULL
+  };
+  for (size_t i = 0; keywords[i]; i++) {
+    if (lower_text_span_eq(start, end, keywords[i])) return true;
+  }
+  return false;
+}
+
+static bool lower_identifier_valid(const char *text) {
+  if (!text || !lower_identifier_start(*text)) return false;
+  const char *cursor = text + 1;
+  for (; *cursor; cursor++) {
+    if (!lower_identifier_part(*cursor)) return false;
+  }
+  return !lower_reserved_word_span(text, cursor);
+}
+
+static bool lower_module_name_valid(const char *text) {
+  if (!text || !*text) return false;
+  const char *cursor = text;
+  for (;;) {
+    const char *segment = cursor;
+    if (!lower_identifier_start(*cursor)) return false;
+    cursor++;
+    while (lower_identifier_part(*cursor)) cursor++;
+    if (lower_reserved_word_span(segment, cursor)) return false;
+    if (*cursor == '\0') return true;
+    if (*cursor != '.') return false;
+    cursor++;
+    if (*cursor == '\0') return false;
+  }
+}
+
+static bool lower_module_is_stdlib(const char *module) {
+  return module && strncmp(module, "std.", 4) == 0;
+}
+
+static const ZProgramGraphNode *lower_find_module_named(const ZProgramGraph *graph, const char *name) {
+  for (size_t i = 0; graph && name && i < graph->node_len; i++) {
+    const ZProgramGraphNode *node = &graph->nodes[i];
+    if (node->kind == Z_PROGRAM_GRAPH_NODE_MODULE && lower_text_eq(node->name, name)) return node;
+  }
+  return NULL;
+}
+
 static Expr *lower_new_expr(ExprKind kind, const ZProgramGraphNode *node) {
   Expr *expr = z_checked_malloc(sizeof(Expr));
   memset(expr, 0, sizeof(*expr));
@@ -592,10 +658,23 @@ static void lower_methods(GraphLower *lower, const ZProgramGraphNode *owner, Fun
 }
 
 static void lower_import(GraphLower *lower, Program *program, const ZProgramGraphNode *node) {
-  (void)lower;
+  const char *module = node && node->name ? node->name : "";
+  const char *alias = node && node->value && node->value[0] ? node->value : NULL;
+  if (!lower_module_name_valid(module)) {
+    lower_fail(lower, node, "program graph import module is not valid Zero import syntax", "dot-separated module identifiers", module, "use module names like std.mem or package.local");
+    return;
+  }
+  if (alias && !lower_identifier_valid(alias)) {
+    lower_fail(lower, node, "program graph import alias is not valid Zero identifier syntax", "identifier", alias, "use an identifier alias or clear the alias value");
+    return;
+  }
+  if (!lower_module_is_stdlib(module) && !lower_find_module_named(lower->graph, module)) {
+    lower_fail(lower, node, "program graph import target module is missing", "Module node for package-local import or std.* import", module, "add the imported module to the artifact or remove the import");
+    return;
+  }
   lower_push_use(&program->use_imports, (UseImport){
-    .module = z_strdup(node->name && node->name[0] ? node->name : ""),
-    .alias = node->value && node->value[0] ? z_strdup(node->value) : NULL,
+    .module = z_strdup(module),
+    .alias = alias ? z_strdup(alias) : NULL,
     .line = node->line > 0 ? node->line : 1,
     .column = node->column > 0 ? node->column : 1,
     .end_column = node->column > 0 ? node->column : 1,

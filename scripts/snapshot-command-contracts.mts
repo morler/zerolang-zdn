@@ -348,6 +348,10 @@ const graphPatchInvalidNamePath = join(outDir, "hello.invalid-name.program-graph
 const graphPatchInvalidTypePath = join(outDir, "hello.invalid-type.program-graph.patch");
 const graphPackageDumpPath = join(outDir, "systems-package.program-graph");
 const graphPatchInvalidImportAliasPath = join(outDir, "systems-package.invalid-import-alias.program-graph.patch");
+const graphPatchInvalidImportNamePath = join(outDir, "systems-package.invalid-import-name.program-graph.patch");
+const graphInvalidImportNamePath = join(outDir, "systems-package.invalid-import-name.program-graph");
+const graphPatchMissingImportPath = join(outDir, "systems-package.missing-import.program-graph.patch");
+const graphMissingImportPath = join(outDir, "systems-package.missing-import.program-graph");
 const graphPatchMismatchPath = join(outDir, "hello.mismatch.program-graph.patch");
 const graphPatchBadHashPath = join(outDir, "hello.bad-hash.program-graph.patch");
 const graphSparseOrderPath = join(outDir, "hello.sparse-order.program-graph");
@@ -375,6 +379,10 @@ rmSync(graphPatchInvalidNamePath, { force: true });
 rmSync(graphPatchInvalidTypePath, { force: true });
 rmSync(graphPackageDumpPath, { force: true });
 rmSync(graphPatchInvalidImportAliasPath, { force: true });
+rmSync(graphPatchInvalidImportNamePath, { force: true });
+rmSync(graphInvalidImportNamePath, { force: true });
+rmSync(graphPatchMissingImportPath, { force: true });
+rmSync(graphMissingImportPath, { force: true });
 rmSync(graphPatchMismatchPath, { force: true });
 rmSync(graphPatchBadHashPath, { force: true });
 rmSync(graphSparseOrderPath, { force: true });
@@ -622,6 +630,32 @@ assert.equal(graphPatchInvalidImportAlias.body.diagnostic.message, "patch import
 assert.equal(graphPatchInvalidImportAlias.body.operations[0].field, "value");
 assert.equal(graphPatchInvalidImportAlias.body.operations[0].value, "alias\npub fn injected Void\n");
 assert.equal(graphPatchInvalidImportAlias.body.saved, null);
+writeFileSync(graphPatchInvalidImportNamePath, [
+  "zero-program-graph-patch v1",
+  `expect graphHash "${graphPackageDumpJson.graphHash}"`,
+  `set node="${graphImportNode.id}" field="name" value="+"`,
+  "",
+].join("\n"));
+assert.equal(zero(["graph", "patch", "--out", graphInvalidImportNamePath, graphPackageDumpPath, graphPatchInvalidImportNamePath]).stdout, "program graph patch ok\n");
+const graphInvalidImportName = json(["graph", "check", "--json", graphInvalidImportNamePath], { allowFailure: true });
+assert.notEqual(graphInvalidImportName.code, 0);
+assert.equal(graphInvalidImportName.body.ok, false);
+assert.equal(graphInvalidImportName.body.check.phase, "lower");
+assert.equal(graphInvalidImportName.body.check.lowering, "direct-program-graph");
+assert.equal(graphInvalidImportName.body.diagnostics[0].message, "program graph import module is not valid Zero import syntax");
+writeFileSync(graphPatchMissingImportPath, [
+  "zero-program-graph-patch v1",
+  `expect graphHash "${graphPackageDumpJson.graphHash}"`,
+  `set node="${graphImportNode.id}" field="name" value="missing"`,
+  "",
+].join("\n"));
+assert.equal(zero(["graph", "patch", "--out", graphMissingImportPath, graphPackageDumpPath, graphPatchMissingImportPath]).stdout, "program graph patch ok\n");
+const graphMissingImport = json(["graph", "check", "--json", graphMissingImportPath], { allowFailure: true });
+assert.notEqual(graphMissingImport.code, 0);
+assert.equal(graphMissingImport.body.ok, false);
+assert.equal(graphMissingImport.body.check.phase, "lower");
+assert.equal(graphMissingImport.body.check.lowering, "direct-program-graph");
+assert.equal(graphMissingImport.body.diagnostics[0].message, "program graph import target module is missing");
 writeFileSync(graphPatchBadHashPath, [
   "zero-program-graph-patch v1",
   `expect graphHash "graph:0000000000000000"`,
