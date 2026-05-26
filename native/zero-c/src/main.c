@@ -5,6 +5,7 @@
 #include "zero.h"
 #include "buildability.h"
 #include "program_graph_format.h"
+#include "zdn_format.h"
 #include "std_sig.h"
 #include "std_source.h"
 
@@ -36,6 +37,12 @@ typedef enum {
   EMIT_OBJ
 } EmitKind;
 
+typedef enum {
+  FORMAT_TEXT = 0,
+  FORMAT_JSON = 1,
+  FORMAT_ZDN = 2
+} OutputFormat;
+
 typedef struct {
   const char *command;
   const char *kind;
@@ -50,7 +57,7 @@ typedef struct {
   const char *filter;
   int run_argc;
   char **run_argv;
-  bool json;
+  OutputFormat format;
   bool plan;
   bool apply;
   bool patch;
@@ -2889,11 +2896,12 @@ static int explain_command(const Command *command) {
     snprintf(diag.expected, sizeof(diag.expected), "known diagnostic code");
     snprintf(diag.actual, sizeof(diag.actual), "%s", command->input ? command->input : "");
     snprintf(diag.help, sizeof(diag.help), "try TAR002, TYP009, TYP023, ERR002, ERR003, or STD003");
-    if (command->json) print_diag_json(command->input, &diag);
+    if (command->format == FORMAT_ZDN) zdn_print_diag(command->input, &diag); else if (command->format == FORMAT_JSON) print_diag_json(command->input, &diag);
     else print_diag(command->input, &diag);
     return 1;
   }
-  if (command->json) print_explain_json(info);
+  if (command->format == FORMAT_ZDN) ; /* ZDN explain not yet implemented */
+  else if (command->format == FORMAT_JSON) print_explain_json(info);
   else print_explain_text(info);
   return 0;
 }
@@ -3314,7 +3322,18 @@ static bool parse_common_option(int argc, char **argv, int *index, Command *comm
     else command->filter = argv[++(*index)];
     return true;
   } else if (strcmp(arg, "--json") == 0) {
-    command->json = true;
+    command->format = FORMAT_JSON;
+    return true;
+  } else if (strcmp(arg, "--format") == 0) {
+    if (*index + 1 >= argc) command->unknown_flag = arg;
+    else {
+      (*index)++;
+      if (strcmp(argv[*index], "zdn") == 0) command->format = FORMAT_ZDN;
+      else command->unknown_flag = argv[*index];
+    }
+    return true;
+  } else if (strcmp(arg, "--zdn") == 0) {
+    command->format = FORMAT_ZDN;
     return true;
   } else if (strcmp(arg, "--plan") == 0) {
     command->plan = true;
@@ -3368,7 +3387,7 @@ static bool parse_command(int argc, char **argv, Command *command) {
   if (strcmp(command->command, "skills") == 0) {
     for (int i = 2; i < argc; i++) {
       if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) command->kind = "help";
-      else if (strcmp(argv[i], "--json") == 0) command->json = true;
+      else if (strcmp(argv[i], "--json") == 0) command->format = FORMAT_JSON;
       else if (strcmp(argv[i], "--all") == 0) command->all = true;
       else if (strcmp(argv[i], "--full") == 0) {
         continue;
@@ -4274,7 +4293,7 @@ static void init_direct_backend_diag(ZDiag *diag, const Command *command, const 
 static int return_direct_backend_error(const Command *command, const SourceInput *input, const ZTargetInfo *target, const char *emit_kind, const char *reason, IrProgram *ir, Program *program) {
   ZDiag diag;
   init_direct_backend_diag(&diag, command, input, target, emit_kind, reason);
-  if (command && command->json) print_diag_json(input ? input->source_file : NULL, &diag);
+  if (command && command->format != FORMAT_TEXT) print_diag_json(input ? input->source_file : NULL, &diag);
   else print_diag(input ? input->source_file : NULL, &diag);
   if (ir) z_free_ir_program(ir);
   if (program) z_free_program(program);
@@ -4286,7 +4305,7 @@ static int return_buildability_error(const Command *command, const SourceInput *
     z_map_source_diag(input, diag);
     if (!diag->path) diag->path = input->source_file;
   }
-  if (command && command->json) print_diag_json(input ? input->source_file : NULL, diag);
+  if (command && command->format != FORMAT_TEXT) print_diag_json(input ? input->source_file : NULL, diag);
   else print_diag(input ? input->source_file : NULL, diag);
   if (ir) z_free_ir_program(ir);
   if (program) z_free_program(program);
@@ -6730,7 +6749,7 @@ static int run_tests_direct(const Command *command, const SourceInput *input, co
   const char *stderr_text = first_failure.message[0] ? first_failure.message : "";
   bool ok = failed == 0;
   long long duration_ms = now_ms() - started_ms;
-  if (command && command->json) {
+  if (command && command->format != FORMAT_TEXT) {
     ZBuf buf;
     zbuf_init(&buf);
     zbuf_append(&buf, "{\n  \"schemaVersion\": 1,\n  \"ok\": ");
@@ -9123,24 +9142,26 @@ static void append_graph_validate_json(ZBuf *buf, const Command *command, const 
 static int run_graph_validate_command(const Command *command, ZDiag *diag) {
   ZProgramGraph graph;
   if (!z_program_graph_load(command->input, &graph, diag)) {
-    if (command->json) print_diag_json(diag->path ? diag->path : command->input, diag);
+    if (command->format == FORMAT_ZDN) zdn_print_diag(diag->path ? diag->path : command->input, diag); else if (command->format == FORMAT_JSON) print_diag_json(diag->path ? diag->path : command->input, diag);
     else print_diag(diag->path ? diag->path : command->input, diag);
     return 1;
   }
   if (command->out && !z_program_graph_save(command->out, &graph, diag)) {
-    if (command->json) print_diag_json(diag->path ? diag->path : command->out, diag);
+    if (command->format == FORMAT_ZDN) zdn_print_diag(diag->path ? diag->path : command->out, diag); else if (command->format == FORMAT_JSON) print_diag_json(diag->path ? diag->path : command->out, diag);
     else print_diag(diag->path ? diag->path : command->out, diag);
     z_program_graph_free(&graph);
     return 1;
   }
   ZProgramGraphValidation validation = {0};
   z_program_graph_validate(&graph, &validation);
-  if (command->json) {
+  if (command->format == FORMAT_JSON) {
     ZBuf json;
     zbuf_init(&json);
     append_graph_validate_json(&json, command, &graph, &validation);
     fputs(json.data, stdout);
     zbuf_free(&json);
+  } else if (command->format == FORMAT_ZDN) {
+    /* ZDN graph validate not yet implemented */
   } else {
     printf("program graph ok\n");
   }
@@ -9160,9 +9181,9 @@ static int run_graph_command(const Command *command, SourceInput *input, Program
   }
   ZBuf graph;
   zbuf_init(&graph);
-  if (graph_dump) z_append_program_graph_dump(&graph, input, program, command->json);
+  if (graph_dump) z_append_program_graph_dump(&graph, input, program, command->format != FORMAT_TEXT);
   else append_graph_json(&graph, input, program, target, command);
-  if (graph_dump && command->out && !command->json) {
+  if (graph_dump && command->out && command->format == FORMAT_TEXT) {
     ZProgramGraph stored;
     if (!z_program_graph_parse_dump(graph.data ? graph.data : "", &stored, diag)) {
       print_diag(diag->path ? diag->path : command->out, diag);
@@ -9181,7 +9202,7 @@ static int run_graph_command(const Command *command, SourceInput *input, Program
   }
   if (command->out) {
     if (!z_write_file(command->out, graph.data ? graph.data : "", diag)) {
-      if (command->json) print_diag_json(diag->path ? diag->path : command->out, diag);
+      if (command->format == FORMAT_ZDN) zdn_print_diag(diag->path ? diag->path : command->out, diag); else if (command->format == FORMAT_JSON) print_diag_json(diag->path ? diag->path : command->out, diag);
       else print_diag(diag->path ? diag->path : command->out, diag);
       zbuf_free(&graph);
       return 1;
@@ -9224,12 +9245,12 @@ int main(int argc, char **argv) {
     snprintf(diag.expected, sizeof(diag.expected), "one of exe, obj");
     snprintf(diag.actual, sizeof(diag.actual), "--emit %s", command.invalid_emit);
     snprintf(diag.help, sizeof(diag.help), "use --emit exe or --emit obj");
-    if (command.json) print_diag_json(command.input, &diag);
+    if (command.format == FORMAT_ZDN) zdn_print_diag(command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(command.input, &diag);
     else print_diag(command.input, &diag);
     return 1;
   }
   if (strcmp(command.command, "--version") == 0 || strcmp(command.command, "version") == 0) {
-    return print_version_command(command.json);
+    return print_version_command(command.format != FORMAT_TEXT);
   }
   if (strcmp(command.command, "targets") == 0) {
     ZBuf targets;
@@ -9243,13 +9264,13 @@ int main(int argc, char **argv) {
     return new_command(&command);
   }
   if (strcmp(command.command, "doctor") == 0) {
-    return doctor_command(command.json);
+    return doctor_command(command.format != FORMAT_TEXT);
   }
   if (strcmp(command.command, "clean") == 0) {
     return clean_command(&command);
   }
   if (strcmp(command.command, "skills") == 0) {
-    return embedded_skills_command(argc, argv, command.json);
+    return embedded_skills_command(argc, argv, command.format != FORMAT_TEXT);
   }
   if (!command.input) {
     print_command_help(command.command);
@@ -9267,7 +9288,7 @@ int main(int argc, char **argv) {
     snprintf(diag.expected, sizeof(diag.expected), "one of zero targets");
     snprintf(diag.actual, sizeof(diag.actual), "%s", command.target);
     snprintf(diag.help, sizeof(diag.help), "run zero targets and choose a supported target name");
-    if (command.json) print_diag_json(command.input, &diag);
+    if (command.format == FORMAT_ZDN) zdn_print_diag(command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(command.input, &diag);
     else print_diag(command.input, &diag);
     return 1;
   }
@@ -9281,22 +9302,23 @@ int main(int argc, char **argv) {
     snprintf(diag.expected, sizeof(diag.expected), "zero build --emit exe|obj <input>");
     snprintf(diag.actual, sizeof(diag.actual), command.legacy_backend ? "--legacy-backend" : "--emit c");
     snprintf(diag.help, sizeof(diag.help), "use direct emitters; C backend output is not a compatibility or debug path");
-    if (command.json) print_diag_json(command.input, &diag);
+    if (command.format == FORMAT_ZDN) zdn_print_diag(command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(command.input, &diag);
     else print_diag(command.input, &diag);
     return 1;
   }
 
   if (strcmp(command.command, "run") == 0) {
-    if (command.json) {
+    if (command.format != FORMAT_TEXT) {
       diag.code = 2002;
       diag.line = 1;
       diag.column = 1;
       diag.length = 1;
-      snprintf(diag.message, sizeof(diag.message), "zero run does not support --json");
+      snprintf(diag.message, sizeof(diag.message), "zero run does not support --json or --format zdn");
       snprintf(diag.expected, sizeof(diag.expected), "zero run <input>");
       snprintf(diag.actual, sizeof(diag.actual), "zero run --json");
       snprintf(diag.help, sizeof(diag.help), "program stdout belongs to the program; use zero build --json to inspect the artifact before running it");
-      print_diag_json(command.input, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(command.input, &diag);
+      else print_diag_json(command.input, &diag);
       return 1;
     }
     if (command.emit != EMIT_EXE) {
@@ -9337,7 +9359,7 @@ int main(int argc, char **argv) {
     snprintf(diag.expected, sizeof(diag.expected), "zero fix --plan, --patch, or --apply --json <input>");
     snprintf(diag.actual, sizeof(diag.actual), "zero fix without a mode");
     snprintf(diag.help, sizeof(diag.help), "rerun with --plan to inspect repairs, --patch to preview edits, or --apply for behavior-preserving edits");
-    if (command.json) print_diag_json(command.input, &diag);
+    if (command.format == FORMAT_ZDN) zdn_print_diag(command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(command.input, &diag);
     else print_diag(command.input, &diag);
     return 1;
   }
@@ -9349,12 +9371,12 @@ int main(int argc, char **argv) {
   if (strcmp(command.command, "fmt") == 0) {
     SourceInput fmt_input = {0};
     if (!load_command_source(command.input, &fmt_input, &diag)) {
-      if (command.json) print_diag_json(command.input, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(command.input, &diag);
       else print_diag(diag.path ? diag.path : command.input, &diag);
       return 1;
     }
     if (!fmt_input.source) {
-      if (command.json) print_diag_json(command.input, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(command.input, &diag);
       else print_diag(diag.path ? diag.path : command.input, &diag);
       z_free_source(&fmt_input);
       return 1;
@@ -9363,7 +9385,7 @@ int main(int argc, char **argv) {
     char *formatted = format_row_source_text(fmt_input.source, &diag);
     if (!formatted || diag.code != 0) {
       z_map_source_diag(&fmt_input, &diag);
-      if (command.json) print_diag_json(diag.path ? diag.path : command.input, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(diag.path ? diag.path : command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : command.input, &diag);
       else print_diag(diag.path ? diag.path : command.input, &diag);
       free(formatted);
       z_free_source(&fmt_input);
@@ -9389,12 +9411,12 @@ int main(int argc, char **argv) {
   if (strcmp(command.command, "tokens") == 0) {
     SourceInput token_input = {0};
     if (!load_command_source(command.input, &token_input, &diag)) {
-      if (command.json) print_diag_json(command.input, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(command.input, &diag);
       else print_diag(diag.path ? diag.path : command.input, &diag);
       return 1;
     }
     if (!token_input.source) {
-      if (command.json) print_diag_json(command.input, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(command.input, &diag);
       else print_diag(diag.path ? diag.path : command.input, &diag);
       z_free_source(&token_input);
       return 1;
@@ -9403,13 +9425,13 @@ int main(int argc, char **argv) {
     ZRowTokenVec tokens = z_row_tokenize(token_input.source, &diag);
     if (diag.code != 0) {
       z_map_source_diag(&token_input, &diag);
-      if (command.json) print_diag_json(diag.path ? diag.path : command.input, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(diag.path ? diag.path : command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : command.input, &diag);
       else print_diag(diag.path ? diag.path : command.input, &diag);
       z_free_row_tokens(&tokens);
       z_free_source(&token_input);
       return 1;
     }
-    if (command.json) {
+    if (command.format == FORMAT_JSON) {
       ZBuf buf;
       zbuf_init(&buf);
       append_row_tokens_json(&buf, token_input.source_file, &tokens);
@@ -9428,12 +9450,12 @@ int main(int argc, char **argv) {
   if (strcmp(command.command, "parse") == 0) {
     SourceInput parse_input = {0};
     if (!load_command_source(command.input, &parse_input, &diag)) {
-      if (command.json) print_diag_json(command.input, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(command.input, &diag);
       else print_diag(diag.path ? diag.path : command.input, &diag);
       return 1;
     }
     if (!parse_input.source) {
-      if (command.json) print_diag_json(command.input, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(command.input, &diag);
       else print_diag(diag.path ? diag.path : command.input, &diag);
       z_free_source(&parse_input);
       return 1;
@@ -9443,13 +9465,13 @@ int main(int argc, char **argv) {
     parse_row_source_text(parse_input.source, &parsed, &diag);
     if (diag.code != 0) {
       z_map_source_diag(&parse_input, &diag);
-      if (command.json) print_diag_json(diag.path ? diag.path : command.input, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(diag.path ? diag.path : command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : command.input, &diag);
       else print_diag(diag.path ? diag.path : command.input, &diag);
       z_free_program(&parsed);
       z_free_source(&parse_input);
       return 1;
     }
-    if (command.json) {
+    if (command.format == FORMAT_JSON) {
       ZBuf buf;
       zbuf_init(&buf);
       append_parse_json(&buf, parse_input.source_file, &parsed);
@@ -9478,7 +9500,7 @@ int main(int argc, char **argv) {
       z_free_source(&input);
       return 0;
     }
-    if (command.json) print_diag_json(diag.path ? diag.path : command.input, &diag);
+    if (command.format == FORMAT_ZDN) zdn_print_diag(diag.path ? diag.path : command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : command.input, &diag);
     else print_diag(diag.path ? diag.path : command.input, &diag);
     z_free_program(&program);
     z_free_source(&input);
@@ -9493,7 +9515,7 @@ int main(int argc, char **argv) {
       z_free_source(&input);
       return 0;
     }
-    if (command.json) print_diag_json(diag.path ? diag.path : command.input, &diag);
+    if (command.format == FORMAT_ZDN) zdn_print_diag(diag.path ? diag.path : command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : command.input, &diag);
     else print_diag(diag.path ? diag.path : command.input, &diag);
     z_free_program(&program);
     z_free_source(&input);
@@ -9501,7 +9523,7 @@ int main(int argc, char **argv) {
   }
 
   if (!is_graph_command && !validate_package_dependencies_for_target(&input, target, &diag)) {
-    if (command.json) print_diag_json(diag.path ? diag.path : command.input, &diag);
+    if (command.format == FORMAT_ZDN) zdn_print_diag(diag.path ? diag.path : command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : command.input, &diag);
     else print_diag(diag.path ? diag.path : command.input, &diag);
     z_free_program(&program);
     z_free_source(&input);
@@ -9510,7 +9532,7 @@ int main(int argc, char **argv) {
 
   if ((strcmp(command.command, "build") == 0 || strcmp(command.command, "run") == 0 || strcmp(command.command, "ship") == 0) &&
       !validate_c_libraries_for_target(&input, target, &diag)) {
-    if (command.json) print_diag_json(diag.path ? diag.path : command.input, &diag);
+    if (command.format == FORMAT_ZDN) zdn_print_diag(diag.path ? diag.path : command.input, &diag); else if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : command.input, &diag);
     else print_diag(diag.path ? diag.path : command.input, &diag);
     z_free_program(&program);
     z_free_source(&input);
@@ -9526,7 +9548,8 @@ int main(int argc, char **argv) {
   }
 
   if (strcmp(command.command, "check") == 0) {
-    if (command.json) print_check_json_success(input.source_file, &input, &program, target, &command);
+    if (command.format == FORMAT_ZDN) zdn_print_check_success(input.source_file, &input, &program, target);
+    else if (command.format == FORMAT_JSON) print_check_json_success(input.source_file, &input, &program, target, &command);
     else printf("ok\n");
     z_free_program(&program);
     z_free_source(&input);
@@ -9569,7 +9592,7 @@ int main(int argc, char **argv) {
   if (strcmp(command.command, "abi") == 0) {
     const char *mode = command.kind ? command.kind : "check";
     if (strcmp(mode, "dump") == 0) {
-      if (command.json) {
+      if (command.format == FORMAT_JSON) {
         ZBuf abi;
         zbuf_init(&abi);
         append_abi_dump_json(&abi, &input, &program, target);
@@ -9579,7 +9602,7 @@ int main(int argc, char **argv) {
         printf("abi dump ok\n");
       }
     } else if (strcmp(mode, "check") == 0) {
-      if (command.json) {
+      if (command.format == FORMAT_JSON) {
         printf("{\n  \"schemaVersion\": 1,\n  \"ok\": true,\n  \"sourceFile\": ");
         print_json_string(input.source_file);
         printf(",\n  \"target\": ");
@@ -9651,7 +9674,7 @@ int main(int argc, char **argv) {
       z_map_source_diag(&input, &diag);
       if (!diag.path) diag.path = input.source_file;
       complete_backend_blocker_diag(&diag, target, &command, "obj", "emit");
-      if (command.json) print_diag_json(input.source_file, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(input.source_file, &diag); else if (command.format == FORMAT_JSON) print_diag_json(input.source_file, &diag);
       else print_diag(input.source_file, &diag);
       z_free_ir_program(&ir);
       z_free_program(&program);
@@ -9676,7 +9699,8 @@ int main(int argc, char **argv) {
     }
 
     long long elapsed_ms = now_ms() - command_started_ms;
-    if (command.json) print_build_json(&command, &input, &program, target, "obj", object_file, file_size_or_negative(object_file), 0, elapsed_ms);
+    if (command.format == FORMAT_ZDN) zdn_print_build(input.source_file, "obj", target->name, command.profile, object_file, file_size_or_negative(object_file), elapsed_ms);
+    else if (command.format == FORMAT_JSON) print_build_json(&command, &input, &program, target, "obj", object_file, file_size_or_negative(object_file), 0, elapsed_ms);
     else print_artifact(object_file, elapsed_ms);
     free(object_file);
     zbuf_free(&object);
@@ -9715,7 +9739,7 @@ int main(int argc, char **argv) {
       z_map_source_diag(&input, &diag);
       if (!diag.path) diag.path = input.source_file;
       complete_backend_blocker_diag(&diag, target, &command, "exe", "emit");
-      if (command.json) print_diag_json(input.source_file, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(input.source_file, &diag); else if (command.format == FORMAT_JSON) print_diag_json(input.source_file, &diag);
       else print_diag(input.source_file, &diag);
       zbuf_free(&object);
       z_free_ir_program(&ir);
@@ -9739,7 +9763,7 @@ int main(int argc, char **argv) {
     if (wrote_object && needs_http_runtime) wrote_object = compile_zero_http_curl_object(http_object_file, &runtime_toolchain, &command, target, &diag);
     input.object_ms = now_ms() - phase_started;
     if (!wrote_object) {
-      if (command.json) print_diag_json(diag.path ? diag.path : input.source_file, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(diag.path ? diag.path : input.source_file, &diag); else if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : input.source_file, &diag);
       else print_diag(diag.path ? diag.path : input.source_file, &diag);
       free(http_object_file);
       free(runtime_object_file);
@@ -9760,7 +9784,7 @@ int main(int argc, char **argv) {
     remove(runtime_object_file);
     if (http_object_file) remove(http_object_file);
     if (!linked) {
-      if (command.json) print_diag_json(diag.path ? diag.path : input.source_file, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(diag.path ? diag.path : input.source_file, &diag); else if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : input.source_file, &diag);
       else print_diag(diag.path ? diag.path : input.source_file, &diag);
       free(http_object_file);
       free(runtime_object_file);
@@ -9787,7 +9811,8 @@ int main(int argc, char **argv) {
     }
 
     long long elapsed_ms = now_ms() - command_started_ms;
-    if (command.json) print_build_json(&command, &input, &program, target, "exe", exe_file, file_size_or_negative(exe_file), 0, elapsed_ms);
+    if (command.format == FORMAT_ZDN) zdn_print_build(input.source_file, "exe", target->name, command.profile, exe_file, file_size_or_negative(exe_file), elapsed_ms);
+    else if (command.format == FORMAT_JSON) print_build_json(&command, &input, &program, target, "exe", exe_file, file_size_or_negative(exe_file), 0, elapsed_ms);
     else print_artifact(exe_file, elapsed_ms);
     free(http_object_file);
     free(runtime_object_file);
@@ -9819,7 +9844,7 @@ int main(int argc, char **argv) {
       z_map_source_diag(&input, &diag);
       if (!diag.path) diag.path = input.source_file;
       complete_backend_blocker_diag(&diag, target, &command, "exe", "emit");
-      if (command.json) print_diag_json(input.source_file, &diag);
+      if (command.format == FORMAT_ZDN) zdn_print_diag(input.source_file, &diag); else if (command.format == FORMAT_JSON) print_diag_json(input.source_file, &diag);
       else print_diag(input.source_file, &diag);
       z_free_ir_program(&ir);
       z_free_program(&program);
@@ -9860,7 +9885,7 @@ int main(int argc, char **argv) {
     if (ship_command) {
       ShipArtifacts ship = {0};
       if (!write_ship_artifacts(&command, &input, target, &exe, exe_file, &ship, &diag)) {
-        if (command.json) print_diag_json(diag.path ? diag.path : exe_file, &diag);
+        if (command.format == FORMAT_ZDN) zdn_print_diag(diag.path ? diag.path : exe_file, &diag); else if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : exe_file, &diag);
         else print_diag(diag.path ? diag.path : exe_file, &diag);
         ship_artifacts_free(&ship);
         free(exe_file);
@@ -9870,10 +9895,12 @@ int main(int argc, char **argv) {
         z_free_source(&input);
         return 1;
       }
-      if (command.json) print_ship_json(&command, &input, &program, target, &ship, elapsed_ms);
+      if (command.format == FORMAT_JSON) print_ship_json(&command, &input, &program, target, &ship, elapsed_ms);
       else print_ship_text(&ship, elapsed_ms);
       ship_artifacts_free(&ship);
-    } else if (command.json) {
+    } else if (command.format == FORMAT_ZDN) {
+      zdn_print_build(input.source_file, "exe", target->name, command.profile, exe_file, file_size_or_negative(exe_file), elapsed_ms);
+    } else if (command.format == FORMAT_JSON) {
       print_build_json(&command, &input, &program, target, "exe", exe_file, file_size_or_negative(exe_file), 0, elapsed_ms);
     } else {
       print_artifact(exe_file, elapsed_ms);
