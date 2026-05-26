@@ -221,6 +221,61 @@ static void expect_lower_rejects_reserved_function_name(void) {
   z_program_graph_free(&graph);
 }
 
+static void expect_lower_rejects_internal_function_name(void) {
+  ZProgramGraph graph;
+  z_program_graph_init(&graph);
+  graph.nodes = z_checked_calloc(3, sizeof(ZProgramGraphNode));
+  graph.node_len = 3;
+  graph.node_cap = 3;
+  set_node(&graph.nodes[0], "node:000001", Z_PROGRAM_GRAPH_NODE_MODULE, "smoke", NULL);
+  set_node(&graph.nodes[1], "node:000002", Z_PROGRAM_GRAPH_NODE_FUNCTION, "__zero_bad", "Void");
+  graph.nodes[1].is_public = true;
+  set_node(&graph.nodes[2], "node:000003", Z_PROGRAM_GRAPH_NODE_BLOCK, "body", NULL);
+  graph.edges = z_checked_calloc(2, sizeof(ZProgramGraphEdge));
+  graph.edge_len = 2;
+  graph.edge_cap = 2;
+  set_edge(&graph.edges[0], "node:000001", "node:000002", "function", Z_PROGRAM_GRAPH_EDGE_TARGET_NODE, 0);
+  set_edge(&graph.edges[1], "node:000002", "node:000003", "body", Z_PROGRAM_GRAPH_EDGE_TARGET_NODE, 0);
+  z_program_graph_finalize_identities(&graph);
+
+  ZProgramGraphValidation validation = {0};
+  expect(z_program_graph_validate(&graph, &validation), "internal function name graph should remain shape-valid");
+  Program program = {0};
+  ZDiag diag = {0};
+  expect(!z_program_graph_lower_to_program(&graph, &program, &diag), "internal function name lowered successfully");
+  expect(strstr(diag.message, "reserved compiler-internal") != NULL, "internal function name reported wrong diagnostic");
+  z_program_graph_free(&graph);
+}
+
+static void expect_lower_allows_embedded_std_internal_function_name(void) {
+  ZProgramGraph graph;
+  z_program_graph_init(&graph);
+  graph.nodes = z_checked_calloc(3, sizeof(ZProgramGraphNode));
+  graph.node_len = 3;
+  graph.node_cap = 3;
+  set_node(&graph.nodes[0], "node:000001", Z_PROGRAM_GRAPH_NODE_MODULE, "std.math", NULL);
+  free(graph.nodes[0].path);
+  graph.nodes[0].path = z_strdup("std/math.0");
+  set_node(&graph.nodes[1], "node:000002", Z_PROGRAM_GRAPH_NODE_FUNCTION, "__zero_std_math_local", "Void");
+  set_node(&graph.nodes[2], "node:000003", Z_PROGRAM_GRAPH_NODE_BLOCK, "body", NULL);
+  graph.edges = z_checked_calloc(2, sizeof(ZProgramGraphEdge));
+  graph.edge_len = 2;
+  graph.edge_cap = 2;
+  set_edge(&graph.edges[0], "node:000001", "node:000002", "function", Z_PROGRAM_GRAPH_EDGE_TARGET_NODE, 0);
+  set_edge(&graph.edges[1], "node:000002", "node:000003", "body", Z_PROGRAM_GRAPH_EDGE_TARGET_NODE, 0);
+  z_program_graph_finalize_identities(&graph);
+
+  ZProgramGraphValidation validation = {0};
+  expect(z_program_graph_validate(&graph, &validation), "embedded std internal function graph should remain shape-valid");
+  Program program = {0};
+  ZDiag diag = {0};
+  expect(z_program_graph_lower_to_program(&graph, &program, &diag), diag.message);
+  expect(program.functions.len == 1, "embedded std internal function was not lowered");
+  expect(strcmp(program.functions.items[0].name, "__zero_std_math_local") == 0, "embedded std internal function name changed");
+  z_free_program(&program);
+  z_program_graph_free(&graph);
+}
+
 static void expect_lower_rejects_reserved_call_name(void) {
   ZProgramGraph graph;
   z_program_graph_init(&graph);
@@ -255,6 +310,8 @@ int main(void) {
   expect_lowered_program();
   expect_lower_rejects_bad_imports();
   expect_lower_rejects_reserved_function_name();
+  expect_lower_rejects_internal_function_name();
+  expect_lower_allows_embedded_std_internal_function_name();
   expect_lower_rejects_reserved_call_name();
 
   ZProgramGraph graph;

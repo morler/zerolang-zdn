@@ -348,6 +348,8 @@ const graphPatchInvalidNamePath = join(outDir, "hello.invalid-name.program-graph
 const graphPatchInvalidTypePath = join(outDir, "hello.invalid-type.program-graph.patch");
 const graphPatchReservedParamPath = join(outDir, "hello.reserved-param.program-graph.patch");
 const graphReservedParamPath = join(outDir, "hello.reserved-param.program-graph");
+const graphPatchInternalFunctionPath = join(outDir, "hello.internal-function.program-graph.patch");
+const graphInternalFunctionPath = join(outDir, "hello.internal-function.program-graph");
 const graphPackageDumpPath = join(outDir, "systems-package.program-graph");
 const graphPatchInvalidImportAliasPath = join(outDir, "systems-package.invalid-import-alias.program-graph.patch");
 const graphPatchInvalidImportNamePath = join(outDir, "systems-package.invalid-import-name.program-graph.patch");
@@ -381,6 +383,8 @@ rmSync(graphPatchInvalidNamePath, { force: true });
 rmSync(graphPatchInvalidTypePath, { force: true });
 rmSync(graphPatchReservedParamPath, { force: true });
 rmSync(graphReservedParamPath, { force: true });
+rmSync(graphPatchInternalFunctionPath, { force: true });
+rmSync(graphInternalFunctionPath, { force: true });
 rmSync(graphPackageDumpPath, { force: true });
 rmSync(graphPatchInvalidImportAliasPath, { force: true });
 rmSync(graphPatchInvalidImportNamePath, { force: true });
@@ -631,6 +635,21 @@ assert.equal(graphReservedParam.body.ok, false);
 assert.equal(graphReservedParam.body.check.phase, "lower");
 assert.equal(graphReservedParam.body.check.lowering, "direct-program-graph");
 assert.equal(graphReservedParam.body.diagnostics[0].message, "program graph parameter name is not valid Zero identifier syntax");
+const graphMainFunctionNode = graphDumpJson.nodes.find((node) => node.kind === "Function" && node.name === "main");
+assert(graphMainFunctionNode);
+writeFileSync(graphPatchInternalFunctionPath, [
+  "zero-program-graph-patch v1",
+  `expect graphHash "${graphDumpJson.graphHash}"`,
+  `set node="${graphMainFunctionNode.id}" field="name" expect="main" value="__zero_bad"`,
+  "",
+].join("\n"));
+assert.equal(zero(["graph", "patch", "--out", graphInternalFunctionPath, graphDumpPath, graphPatchInternalFunctionPath]).stdout, "program graph patch ok\n");
+const graphInternalFunction = json(["graph", "check", "--json", graphInternalFunctionPath], { allowFailure: true });
+assert.notEqual(graphInternalFunction.code, 0);
+assert.equal(graphInternalFunction.body.ok, false);
+assert.equal(graphInternalFunction.body.check.phase, "lower");
+assert.equal(graphInternalFunction.body.check.lowering, "direct-program-graph");
+assert.equal(graphInternalFunction.body.diagnostics[0].message, "program graph declaration uses a reserved compiler-internal symbol name");
 assert.equal(zero(["graph", "dump", "--out", graphPackageDumpPath, "examples/systems-package"]).stdout, "");
 const graphPackageDumpJson = json(["graph", "dump", "--json", "examples/systems-package"]).body;
 const graphImportNode = graphPackageDumpJson.nodes.find((node) => node.kind === "Import");

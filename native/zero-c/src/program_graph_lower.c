@@ -1,4 +1,5 @@
 #include "program_graph_lower.h"
+#include "std_source.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -8,6 +9,7 @@
 typedef struct {
   const ZProgramGraph *graph;
   ZDiag *diag;
+  bool allow_internal_symbols;
 } GraphLower;
 
 static void *lower_grow_items(void *items, size_t len, size_t *cap, size_t initial, size_t item_size) {
@@ -194,6 +196,19 @@ static bool lower_starts_with(const char *text, const char *prefix) {
   return strncmp(text, prefix, len) == 0;
 }
 
+static bool lower_embedded_std_module(const ZProgramGraphNode *module) {
+  if (!module || module->kind != Z_PROGRAM_GRAPH_NODE_MODULE) return false;
+  for (size_t i = 0; i < z_std_source_module_count(); i++) {
+    const ZStdSourceModule *std_module = z_std_source_module_at(i);
+    if (std_module &&
+        lower_text_eq(module->name, std_module->module) &&
+        lower_text_eq(module->path, std_module->path)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 static bool lower_identifier_start(char ch) {
   return isalpha((unsigned char)ch) || ch == '_';
 }
@@ -239,6 +254,21 @@ static bool lower_require_identifier(GraphLower *lower, const ZProgramGraphNode 
                     "identifier",
                     text && text[0] ? text : "missing name",
                     "use a non-keyword identifier");
+}
+
+static bool lower_require_top_level_identifier(GraphLower *lower, const ZProgramGraphNode *node, const char *kind, const char *syntax_message, bool allow_test_name) {
+  const char *name = node ? node->name : NULL;
+  if (!lower_require_identifier(lower, node, name, syntax_message)) return false;
+  if ((lower && lower->allow_internal_symbols) || !lower_starts_with(name, "__zero_")) return true;
+  if (allow_test_name && lower_starts_with(name, "__zero_test_")) return true;
+  char expected[128];
+  snprintf(expected, sizeof(expected), "top-level %s name without the __zero_ prefix", kind ? kind : "declaration");
+  return lower_fail(lower,
+                    node,
+                    "program graph declaration uses a reserved compiler-internal symbol name",
+                    expected,
+                    name,
+                    "rename the declaration; __zero_ names are reserved for compiler-provided helpers");
 }
 
 static bool lower_module_name_valid(const char *text) {
@@ -665,8 +695,9 @@ static void lower_params(GraphLower *lower, const ZProgramGraphNode *owner, cons
   }
 }
 
-static Function lower_function(GraphLower *lower, const ZProgramGraphNode *node) {
-  lower_require_identifier(lower, node, node ? node->name : NULL, "program graph function name is not valid Zero identifier syntax");
+static Function lower_function(GraphLower *lower, const ZProgramGraphNode *node, bool top_level) {
+  if (top_level) lower_require_top_level_identifier(lower, node, "function", "program graph function name is not valid Zero identifier syntax", true);
+  else lower_require_identifier(lower, node, node ? node->name : NULL, "program graph function name is not valid Zero identifier syntax");
   Function fun = {
     .name = z_strdup(node && node->name ? node->name : ""),
     .test_name = node && lower_starts_with(node->name, "__zero_test_") ? z_strdup(node->value ? node->value : "") : NULL,
@@ -702,7 +733,7 @@ static void lower_methods(GraphLower *lower, const ZProgramGraphNode *owner, Fun
       lower_fail(lower, method, "program graph method edge does not point to a function", "Function node", z_program_graph_node_kind_name(method->kind), NULL);
       return;
     }
-    lower_push_function(out, lower_function(lower, method));
+    lower_push_function(out, lower_function(lower, method, false));
     if (lower_has_diag(lower)) return;
   }
 }
@@ -742,7 +773,7 @@ static void lower_c_import(GraphLower *lower, Program *program, const ZProgramGr
 }
 
 static void lower_const(GraphLower *lower, Program *program, const ZProgramGraphNode *node) {
-  if (!lower_require_identifier(lower, node, node ? node->name : NULL, "program graph const name is not valid Zero identifier syntax")) return;
+  if (!lower_require_top_level_identifier(lower, node, "const", "program graph const name is not valid Zero identifier syntax", false)) return;
   ConstDecl item = {
     .name = z_strdup(node->name && node->name[0] ? node->name : ""),
     .type = node->type && node->type[0] ? z_strdup(node->type) : NULL,
@@ -755,7 +786,7 @@ static void lower_const(GraphLower *lower, Program *program, const ZProgramGraph
 }
 
 static void lower_alias(GraphLower *lower, Program *program, const ZProgramGraphNode *node) {
-  if (!lower_require_identifier(lower, node, node ? node->name : NULL, "program graph alias name is not valid Zero identifier syntax")) return;
+  if (!lower_require_top_level_identifier(lower, node, "type-alias", "program graph alias name is not valid Zero identifier syntax", false)) return;
   lower_push_alias(&program->aliases, (TypeAlias){
     .name = z_strdup(node->name && node->name[0] ? node->name : ""),
     .target = z_strdup(node->type && node->type[0] ? node->type : ""),
@@ -766,7 +797,7 @@ static void lower_alias(GraphLower *lower, Program *program, const ZProgramGraph
 }
 
 static void lower_shape(GraphLower *lower, Program *program, const ZProgramGraphNode *node) {
-  if (!lower_require_identifier(lower, node, node ? node->name : NULL, "program graph type name is not valid Zero identifier syntax")) return;
+  if (!lower_require_top_level_identifier(lower, node, "shape", "program graph type name is not valid Zero identifier syntax", false)) return;
   Shape shape = {
     .name = z_strdup(node->name && node->name[0] ? node->name : ""),
     .layout = z_strdup(node->value && node->value[0] ? node->value : "auto"),
@@ -781,7 +812,7 @@ static void lower_shape(GraphLower *lower, Program *program, const ZProgramGraph
 }
 
 static void lower_interface(GraphLower *lower, Program *program, const ZProgramGraphNode *node) {
-  if (!lower_require_identifier(lower, node, node ? node->name : NULL, "program graph interface name is not valid Zero identifier syntax")) return;
+  if (!lower_require_top_level_identifier(lower, node, "interface", "program graph interface name is not valid Zero identifier syntax", false)) return;
   InterfaceDecl item = {
     .name = z_strdup(node->name && node->name[0] ? node->name : ""),
     .is_public = node->is_public,
@@ -794,7 +825,7 @@ static void lower_interface(GraphLower *lower, Program *program, const ZProgramG
 }
 
 static void lower_enum(GraphLower *lower, Program *program, const ZProgramGraphNode *node) {
-  if (!lower_require_identifier(lower, node, node ? node->name : NULL, "program graph enum name is not valid Zero identifier syntax")) return;
+  if (!lower_require_top_level_identifier(lower, node, "enum", "program graph enum name is not valid Zero identifier syntax", false)) return;
   EnumDecl item = {
     .name = z_strdup(node->name && node->name[0] ? node->name : ""),
     .type = node->type && node->type[0] ? z_strdup(node->type) : NULL,
@@ -806,7 +837,7 @@ static void lower_enum(GraphLower *lower, Program *program, const ZProgramGraphN
 }
 
 static void lower_choice(GraphLower *lower, Program *program, const ZProgramGraphNode *node) {
-  if (!lower_require_identifier(lower, node, node ? node->name : NULL, "program graph choice name is not valid Zero identifier syntax")) return;
+  if (!lower_require_top_level_identifier(lower, node, "choice", "program graph choice name is not valid Zero identifier syntax", false)) return;
   Choice item = {
     .name = z_strdup(node->name && node->name[0] ? node->name : ""),
     .line = node->line > 0 ? node->line : 1,
@@ -844,7 +875,7 @@ static void lower_top_level(GraphLower *lower, Program *program, const ZProgramG
       lower_choice(lower, program, node);
       break;
     case Z_PROGRAM_GRAPH_NODE_FUNCTION:
-      lower_push_function(&program->functions, lower_function(lower, node));
+      lower_push_function(&program->functions, lower_function(lower, node, true));
       break;
     default:
       lower_fail(lower, node, "program graph declaration kind is not supported by direct lowering", "declaration node", z_program_graph_node_kind_name(node->kind), NULL);
@@ -867,6 +898,8 @@ static void lower_top_level_edges(GraphLower *lower, Program *program, const ZPr
 }
 
 static void lower_module(GraphLower *lower, Program *program, const ZProgramGraphNode *module) {
+  bool previous_allow_internal_symbols = lower->allow_internal_symbols;
+  lower->allow_internal_symbols = lower_embedded_std_module(module);
   lower_top_level_edges(lower, program, module, "cImport");
   lower_top_level_edges(lower, program, module, "import");
   lower_top_level_edges(lower, program, module, "const");
@@ -876,6 +909,7 @@ static void lower_module(GraphLower *lower, Program *program, const ZProgramGrap
   lower_top_level_edges(lower, program, module, "enum");
   lower_top_level_edges(lower, program, module, "choice");
   lower_top_level_edges(lower, program, module, "function");
+  lower->allow_internal_symbols = previous_allow_internal_symbols;
 }
 
 bool z_program_graph_lower_to_program(const ZProgramGraph *graph, Program *out, ZDiag *diag) {
