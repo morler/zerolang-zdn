@@ -9474,12 +9474,8 @@ static void append_graph_import_json(ZBuf *buf, const Command *command, const So
   zbuf_append(buf, "\n}\n");
 }
 
-static const char *graph_check_generated_view_path(void) {
-  return "<generated-graph-view>";
-}
-
 static const char *graph_check_diagnostic_path(const Command *command) {
-  return command && command->out ? command->out : graph_check_generated_view_path();
+  return command && command->input ? command->input : "<program-graph>";
 }
 
 static void append_graph_check_json(
@@ -9896,16 +9892,10 @@ static void graph_roundtrip_cleanup(const char *path, const char *dir) {
   if (dir && dir[0]) rmdir(dir);
 }
 
-static void graph_check_relabel_diag_path(const Command *command, ZDiag *diag) {
+static void graph_check_map_diag_path(const Command *command, const SourceInput *input, ZDiag *diag) {
   if (!diag) return;
-  const char *path = graph_check_diagnostic_path(command);
-  diag->path = path;
-  for (size_t i = 0; i < diag->borrow_trace_count; i++) {
-    if (diag->borrow_traces[i].binding_decl_path) diag->borrow_traces[i].binding_decl_path = path;
-  }
-  if (!diag->help[0] && command && !command->out) {
-    snprintf(diag->help, sizeof(diag->help), "run zero graph view --out <file.0> %s to inspect the generated source", command->input ? command->input : "<graph-artifact>");
-  }
+  if (diag->code != 8003 && input && input->source_file) z_map_source_diag(input, diag);
+  if (!diag->path) diag->path = graph_check_diagnostic_path(command);
 }
 
 typedef enum {
@@ -9921,39 +9911,6 @@ static const char *graph_check_phase_name(GraphCheckPhase phase) {
     case GRAPH_CHECK_PHASE_TARGET_READINESS: return "target-readiness";
   }
   return "unknown";
-}
-
-static bool graph_check_generated_view_for_diag(const Command *command, const ZTargetInfo *target, const char *view, GraphCheckPhase *phase, ZDiag *diag) {
-  ZBuf temp_dir;
-  ZBuf temp_path;
-  zbuf_init(&temp_dir);
-  zbuf_init(&temp_path);
-  if (!graph_temp_path("check", "graph-check.0", &temp_dir, &temp_path, diag) ||
-      !z_write_file(temp_path.data, view ? view : "", diag)) {
-    if (diag && (diag->path == temp_dir.data || diag->path == temp_path.data)) {
-      diag->path = graph_check_diagnostic_path(command);
-    }
-    graph_roundtrip_cleanup(temp_path.data, temp_dir.data);
-    zbuf_free(&temp_dir);
-    zbuf_free(&temp_path);
-    return false;
-  }
-
-  SourceInput checked_input = {0};
-  Program checked_program = {0};
-  bool ok = compile_input(temp_path.data, target, &checked_input, &checked_program, diag);
-  if (ok && !validate_target_capabilities(&checked_program, target, diag, checked_input.source_file)) {
-    if (phase) *phase = GRAPH_CHECK_PHASE_TARGET_READINESS;
-    ok = false;
-  }
-  if (!ok) graph_check_relabel_diag_path(command, diag);
-
-  graph_roundtrip_cleanup(temp_path.data, temp_dir.data);
-  z_free_program(&checked_program);
-  z_free_source(&checked_input);
-  zbuf_free(&temp_dir);
-  zbuf_free(&temp_path);
-  return ok;
 }
 
 static int run_graph_check_command(const Command *command, const ZTargetInfo *target, ZDiag *diag) {
@@ -9990,25 +9947,13 @@ static int run_graph_check_command(const Command *command, const ZTargetInfo *ta
     phase = GRAPH_CHECK_PHASE_TARGET_READINESS;
     ok = false;
   }
-  if (!ok && phase == GRAPH_CHECK_PHASE_TYPECHECK) {
-    ZDiag view_diag = {0};
-    GraphCheckPhase view_phase = phase;
-    if (!graph_check_generated_view_for_diag(command, target, view.data ? view.data : "", &view_phase, &view_diag)) {
-      *diag = view_diag;
-      phase = view_phase;
-    } else {
-      graph_check_relabel_diag_path(command, diag);
-    }
-  } else if (!ok && phase == GRAPH_CHECK_PHASE_TARGET_READINESS) {
-    ZDiag view_diag = {0};
-    GraphCheckPhase view_phase = phase;
-    if (!graph_check_generated_view_for_diag(command, target, view.data ? view.data : "", &view_phase, &view_diag)) {
-      *diag = view_diag;
-      phase = view_phase;
+  if (!ok) {
+    if (phase == GRAPH_CHECK_PHASE_TYPECHECK || phase == GRAPH_CHECK_PHASE_TARGET_READINESS) {
+      graph_check_map_diag_path(command, &checked_input, diag);
+    } else if (!diag->path) {
+      diag->path = command->input;
     }
   }
-
-  if (!ok && phase == GRAPH_CHECK_PHASE_LOWER && !diag->path) diag->path = command->input;
 
   if (command->json) {
     ZBuf json;
