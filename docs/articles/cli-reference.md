@@ -111,6 +111,7 @@ the same output. Supported across all commands that accept
 | `zero dev --zdn`     | `DevResult`      |
 | `zero time --zdn`    | `TimeResult`     |
 | `zero mem --zdn`     | `MemResult`      |
+| `zero test --zdn`    | `TestResult`     |
 | `zero tokens --zdn`  | `TokensResult`   |
 | `zero parse --zdn`   | `ParseResult`    |
 | `zero graph --zdn`   | `GraphResult`    |
@@ -191,7 +192,7 @@ zero dev [--json] [--zdn] [--trace] [--target <target>] <input>
 zero run [--target <target>] [--profile dev|release] [--out <file>] <input> [-- args...]
 zero build [--emit exe|obj] [--target <target>] [--profile dev|release] [--out <file>] <input>
 zero ship [--json] [--zdn] [--target <target>] [--profile release-small|tiny|audit] [--out <file>] <input>
-zero test [--json] [--filter <name>] [--target <target>] [--cc <path>] [--out <file>] <input>
+zero test [--json] [--zdn] [--filter <name>] [--target <target>] [--cc <path>] [--out <file>] <input>
 zero fmt [--check] <input>
 zero graph [dump|validate] [--json] [--zdn] [--target <target>] [--out <file>] <input>
 zero doc [--json] [--zdn] [--target <target>] <input>

@@ -3803,6 +3803,13 @@ for (const [fixture, name, zdnCommand, expectedPatterns] of [
   assert.ok(result.stdout.includes("Diag") || result.stdout.includes("diagnostic"), `expected ZDN diagnostic in:\n${result.stdout}`);
 }
 
+// test --zdn (pass)
+{
+  const result = await execFileAsync(zero, ["test", "--zdn", "conformance/native/pass/test-blocks.0"]);
+  assert.ok(result.stdout.includes("TestResult"), `expected TestResult in:\n${result.stdout}`);
+  assert.ok(result.stdout.includes("ok true"), `expected ok true in:\n${result.stdout}`);
+}
+
 // explain with --zdn
 {
   const result = await execFileAsync(zero, ["explain", "--zdn", "TAR001"]);

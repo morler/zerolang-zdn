@@ -6798,7 +6798,50 @@ static int run_tests_direct(const Command *command, const SourceInput *input, co
   const char *stderr_text = first_failure.message[0] ? first_failure.message : "";
   bool ok = failed == 0;
   long long duration_ms = now_ms() - started_ms;
-  if (command && command->format != FORMAT_TEXT) {
+  if (command && command->format == FORMAT_ZDN) {
+    ZBuf buf;
+    zbuf_init(&buf);
+    zbuf_append(&buf, "TestResult\n");
+    zdn_field_int(&buf, "schemaVersion", 1, 1);
+    zdn_field_bool(&buf, "ok", ok, 1);
+    zdn_field_string(&buf, "sourceFile", input ? input->source_file : "", 1);
+    zdn_field_string(&buf, "target", target ? target->name : z_host_target(), 1);
+    zdn_field_string(&buf, "testBackend", "direct-frontend", 1);
+    zdn_field_int(&buf, "selectedTests", (long long)selected, 1);
+    zdn_field_int(&buf, "discoveredTests", (long long)discovered, 1);
+    zdn_field_int(&buf, "passedTests", (long long)passed, 1);
+    zdn_field_int(&buf, "failedTests", (long long)failed, 1);
+    zdn_field_int(&buf, "expectedFailures", (long long)expected_failures, 1);
+    zdn_field_int(&buf, "unexpectedPasses", (long long)unexpected_passes, 1);
+    zdn_field_int(&buf, "durationMs", duration_ms, 1);
+    zdn_field_string(&buf, "exitCode", ok ? "0" : "1", 1);
+    zdn_field_string(&buf, "stdout", ok ? stdout_text : "", 1);
+    zdn_field_string(&buf, "stderr", stderr_text, 1);
+    zdn_object_start(&buf, "testDiscovery", 1);
+    zdn_field_string(&buf, "mode", input && input->package_root ? "package" : "single-file", 2);
+    if (command && command->filter) zdn_field_string(&buf, "filter", command->filter, 2);
+    zdn_field_string(&buf, "packageRoot", input && input->package_root ? input->package_root : "", 2);
+    zdn_field_string(&buf, "manifestPath", input && input->manifest_path ? input->manifest_path : "", 2);
+    zdn_field_int(&buf, "sourceFileCount", (long long)(input ? input->source_file_count : 0), 2);
+    zdn_field_int(&buf, "moduleCount", (long long)(input ? input->module_count : 0), 2);
+    zdn_field_int(&buf, "discoveredTests", (long long)discovered, 2);
+    zdn_field_int(&buf, "selectedTests", (long long)selected, 2);
+    zdn_object_end(&buf, 1);
+    zdn_object_start(&buf, "fixtures", 1);
+    zdn_array_start(&buf, "sourceFiles", 2);
+    for (size_t i = 0; input && i < input->source_file_count; i++) {
+      zdn_array_item_string(&buf, input->source_files[i], 3);
+    }
+    zdn_array_end(&buf, 2);
+    zdn_field_string(&buf, "goldenOutput", stdout_text, 2);
+    zdn_field_string(&buf, "snapshotKey", "zero-test-direct-frontend-v1", 2);
+    zdn_object_end(&buf, 1);
+    zdn_object_start(&buf, "targetFacts", 1);
+    zdn_field_string(&buf, "hostTarget", z_host_target(), 2);
+    zdn_object_end(&buf, 1);
+    fputs(buf.data, stdout);
+    zbuf_free(&buf);
+  } else if (command && command->format != FORMAT_TEXT) {
     ZBuf buf;
     zbuf_init(&buf);
     zbuf_append(&buf, "{\n  \"schemaVersion\": 1,\n  \"ok\": ");

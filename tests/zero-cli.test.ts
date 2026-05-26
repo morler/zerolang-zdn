@@ -275,7 +275,7 @@ describe("native zero CLI", () => {
     assert.match(result.stderr, /explain: zero explain FLD001/);
   });
 
-  it("produces ZDN output for check, tokens, parse, and explain", async () => {
+  it("produces ZDN output for check, test, tokens, parse, and explain", async () => {
     // check --zdn on a valid program
     const check = await runZero(["check", "--zdn", "examples/add.0"]);
     assert.ok(check.stdout.includes("CheckResult"), `expected CheckResult in:\n${check.stdout}`);
@@ -298,6 +298,11 @@ describe("native zero CLI", () => {
     // doc --zdn
     const doc = await runZero(["doc", "--zdn", "examples/add.0"]);
     assert.ok(doc.stdout.includes("DocResult"), `expected DocResult in:\n${doc.stdout}`);
+
+    // test --zdn (pass)
+    const testPass = await runZero(["test", "--zdn", "conformance/native/pass/test-blocks.0"]);
+    assert.ok(testPass.stdout.includes("TestResult"), `expected TestResult in:\n${testPass.stdout}`);
+    assert.ok(testPass.stdout.includes("ok true"), `expected ok true in:\n${testPass.stdout}`);
 
     // explain --zdn
     const explain = await runZero(["explain", "--zdn", "TAR001"]);
