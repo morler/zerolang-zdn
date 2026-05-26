@@ -3773,4 +3773,41 @@ for (const [fixture, code] of [
   assert.match(result.stderr, code);
 }
 
+// ── ZDN output format tests ──
+
+for (const [fixture, name, zdnCommand, expectedPatterns] of [
+  ["conformance/zdn/pass/hello.0", "check-zdn-pass", ["check", "--zdn"], ["CheckResult", "ok true", `sourceFile "conformance/zdn/pass/hello.0"`]],
+  ["conformance/zdn/pass/hello.0", "tokens-zdn-pass", ["tokens", "--zdn"], ["Tokens", "sourceFile"]],
+  ["conformance/zdn/pass/hello.0", "parse-zdn-pass", ["parse", "--zdn"], ["ParseResult", "sourceFile"]],
+  ["conformance/zdn/pass/hello.0", "doc-zdn-pass", ["doc", "--zdn"], ["DocResult", "sourceFile"]],
+]) {
+  const result = await execFileAsync(zero, [...zdnCommand, fixture]).catch((error) => error);
+  if (result.code) {
+    console.log(`FAIL: ${name} exited with code ${result.code}`);
+    console.log(result.stderr);
+    process.exit(1);
+  }
+  for (const pattern of expectedPatterns) {
+    if (!result.stdout.includes(pattern)) {
+      console.log(`FAIL: ${name} expected "${pattern}" in ZDN output`);
+      console.log(result.stdout);
+      process.exit(1);
+    }
+  }
+}
+
+// Check failure in ZDN format produces a diagnostic
+{
+  const result = await execFileAsync(zero, ["check", "--zdn", "conformance/zdn/fail/unknown-name.0"]).catch((error) => error);
+  assert.notEqual(result.code, 0);
+  assert.ok(result.stdout.includes("Diag") || result.stdout.includes("diagnostic"), `expected ZDN diagnostic in:\n${result.stdout}`);
+}
+
+// explain with --zdn
+{
+  const result = await execFileAsync(zero, ["explain", "--zdn", "TAR001"]);
+  assert.ok(result.stdout.includes("ExplainResult"), `expected ExplainResult in:\n${result.stdout}`);
+  assert.ok(result.stdout.includes("code"), `expected 'code' field in:\n${result.stdout}`);
+}
+
 console.log("conformance ok");
