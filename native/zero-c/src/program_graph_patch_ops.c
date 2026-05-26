@@ -104,22 +104,25 @@ static const ZProgramGraphNode *patch_find_node_const(const ZProgramGraph *graph
 }
 
 static bool patch_symbol_exists(const ZProgramGraph *graph, const char *symbol_id) {
+  if (!symbol_id || !symbol_id[0]) return false;
   for (size_t i = 0; graph && i < graph->node_len; i++) {
-    if (patch_text_eq(graph->nodes[i].symbol_id, symbol_id)) return true;
+    if (graph->nodes[i].symbol_id && patch_text_eq(graph->nodes[i].symbol_id, symbol_id)) return true;
   }
   return false;
 }
 
 static bool patch_type_exists(const ZProgramGraph *graph, const char *type_id) {
+  if (!type_id || !type_id[0]) return false;
   for (size_t i = 0; graph && i < graph->node_len; i++) {
-    if (patch_text_eq(graph->nodes[i].type_id, type_id)) return true;
+    if (graph->nodes[i].type_id && patch_text_eq(graph->nodes[i].type_id, type_id)) return true;
   }
   return false;
 }
 
 static bool patch_effect_exists(const ZProgramGraph *graph, const char *effect_id) {
+  if (!effect_id || !effect_id[0]) return false;
   for (size_t i = 0; graph && i < graph->node_len; i++) {
-    if (patch_text_eq(graph->nodes[i].effect_id, effect_id)) return true;
+    if (graph->nodes[i].effect_id && patch_text_eq(graph->nodes[i].effect_id, effect_id)) return true;
   }
   return false;
 }
@@ -564,10 +567,24 @@ static bool patch_edge_target_removed_by_delete(const ZProgramGraph *graph, cons
   return patch_edge_targets_marked_node(graph, edge, marked) && !patch_domain_id_survives(graph, marked, edge->target, edge->to);
 }
 
-static bool patch_delete_external_reference_allowed(const ZProgramGraph *graph, const ZProgramGraphEdge *edge, const bool *marked, const char *root_id) {
+static const ZProgramGraphEdge *patch_delete_root_parent_edge(const ZProgramGraph *graph, const bool *marked, const char *root_id) {
+  const ZProgramGraphEdge *parent_edge = NULL;
+  size_t parent_count = 0;
+  for (size_t i = 0; graph && marked && root_id && i < graph->edge_len; i++) {
+    const ZProgramGraphEdge *edge = &graph->edges[i];
+    if (!patch_edge_owns_child_node(edge) || !patch_text_eq(edge->to, root_id)) continue;
+    size_t source = patch_node_index(graph, edge->from);
+    if (source != (size_t)-1 && marked[source]) continue;
+    parent_edge = edge;
+    parent_count++;
+  }
+  return parent_count == 1 ? parent_edge : NULL;
+}
+
+static bool patch_delete_external_reference_allowed(const ZProgramGraph *graph, const ZProgramGraphEdge *edge, const bool *marked, const ZProgramGraphEdge *root_parent_edge) {
   size_t source = patch_node_index(graph, edge->from);
   if (source != (size_t)-1 && marked[source]) return true;
-  return patch_edge_owns_child_node(edge) && patch_text_eq(edge->to, root_id);
+  return edge == root_parent_edge;
 }
 
 static bool patch_apply_delete(ZProgramGraph *graph, ZProgramGraphPatchResult *result, ZProgramGraphPatchOpResult *op) {
@@ -597,10 +614,11 @@ static bool patch_apply_delete(ZProgramGraph *graph, ZProgramGraphPatchResult *r
     patch_op_fail(result, op, "GPH003", "patch delete subtree cannot include the module root", "non-module owned subtree", graph->nodes[i].id);
     return false;
   }
+  const ZProgramGraphEdge *root_parent_edge = patch_delete_root_parent_edge(graph, marked, op->node);
   for (size_t i = 0; i < graph->edge_len; i++) {
     const ZProgramGraphEdge *edge = &graph->edges[i];
     if (!patch_edge_target_removed_by_delete(graph, edge, marked)) continue;
-    if (!patch_delete_external_reference_allowed(graph, edge, marked, op->node)) {
+    if (!patch_delete_external_reference_allowed(graph, edge, marked, root_parent_edge)) {
       free(marked);
       patch_op_fail(result, op, "GPH005", "delete would remove a node referenced outside its subtree", "owned subtree", edge->to);
       return false;

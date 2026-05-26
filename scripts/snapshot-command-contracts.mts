@@ -340,11 +340,13 @@ const graphDeletedPath = join(outDir, "hello.delete.program-graph");
 const graphPatchDeleteNodeFactPath = join(outDir, "hello.delete-node-fact.program-graph.patch");
 const graphDeletedNodeFactPath = join(outDir, "hello.delete-node-fact.program-graph");
 const graphPatchDeleteExternalRootRefPath = join(outDir, "hello.delete-external-root-ref.program-graph.patch");
+const graphPatchDeleteExtraOwnerPath = join(outDir, "hello.delete-extra-owner.program-graph.patch");
 const graphPatchReplacePath = join(outDir, "hello.replace.program-graph.patch");
 const graphReplacedPath = join(outDir, "hello.replace.program-graph");
 const graphPatchStaleReplacePath = join(outDir, "hello.stale-replace.program-graph.patch");
 const graphPatchInsertEdgePath = join(outDir, "hello.insert-edge.program-graph.patch");
 const graphInsertedEdgePath = join(outDir, "hello.insert-edge.program-graph");
+const graphPatchEmptyTypeEdgePath = join(outDir, "hello.empty-type-edge.program-graph.patch");
 const graphPatchRenamePath = join(outDir, "hello.rename.program-graph.patch");
 const graphRenamedPath = join(outDir, "hello.rename.program-graph");
 const graphPatchInvalidRenamePath = join(outDir, "hello.invalid-rename.program-graph.patch");
@@ -394,11 +396,13 @@ rmSync(graphDeletedPath, { force: true });
 rmSync(graphPatchDeleteNodeFactPath, { force: true });
 rmSync(graphDeletedNodeFactPath, { force: true });
 rmSync(graphPatchDeleteExternalRootRefPath, { force: true });
+rmSync(graphPatchDeleteExtraOwnerPath, { force: true });
 rmSync(graphPatchReplacePath, { force: true });
 rmSync(graphReplacedPath, { force: true });
 rmSync(graphPatchStaleReplacePath, { force: true });
 rmSync(graphPatchInsertEdgePath, { force: true });
 rmSync(graphInsertedEdgePath, { force: true });
+rmSync(graphPatchEmptyTypeEdgePath, { force: true });
 rmSync(graphPatchRenamePath, { force: true });
 rmSync(graphRenamedPath, { force: true });
 rmSync(graphPatchInvalidRenamePath, { force: true });
@@ -590,6 +594,23 @@ assert.equal(graphDeleteExternalRootRefPatchJson.body.operations[2].ok, false);
 assert.equal(graphDeleteExternalRootRefPatchJson.body.operations[2].code, "GPH005");
 assert.equal(graphDeleteExternalRootRefPatchJson.body.operations[2].actual, "node:patch_external_root_ref");
 assert.equal(graphDeleteExternalRootRefPatchJson.body.saved, null);
+writeFileSync(graphPatchDeleteExtraOwnerPath, [
+  "zero-program-graph-patch v1",
+  `expect graphHash "${graphDumpJson.graphHash}"`,
+  `insert node="node:patch_extra_owner" kind="Check" parent="node:000007" edge="statement" order="1"`,
+  `insertEdge from="node:000001" to="node:patch_extra_owner" edge="function" target="node" order="1"`,
+  `delete node="node:patch_extra_owner"`,
+  "",
+].join("\n"));
+const graphDeleteExtraOwnerPatchJson = json(["graph", "patch", "--json", graphDumpPath, graphPatchDeleteExtraOwnerPath], { allowFailure: true });
+assert.notEqual(graphDeleteExtraOwnerPatchJson.code, 0);
+assert.equal(graphDeleteExtraOwnerPatchJson.body.ok, false);
+assert.equal(graphDeleteExtraOwnerPatchJson.body.operations[0].ok, true);
+assert.equal(graphDeleteExtraOwnerPatchJson.body.operations[1].ok, true);
+assert.equal(graphDeleteExtraOwnerPatchJson.body.operations[2].ok, false);
+assert.equal(graphDeleteExtraOwnerPatchJson.body.operations[2].code, "GPH005");
+assert.equal(graphDeleteExtraOwnerPatchJson.body.operations[2].actual, "node:patch_extra_owner");
+assert.equal(graphDeleteExtraOwnerPatchJson.body.saved, null);
 const graphLiteralNode = graphDumpJson.nodes.find((node) => node.kind === "Literal" && node.type === "String");
 assert(graphLiteralNode);
 writeFileSync(graphPatchReplacePath, [
@@ -632,6 +653,20 @@ assert.equal(graphInsertEdgePatchJson.operations[0].from, graphLiteralNode.id);
 assert.equal(graphInsertEdgePatchJson.operations[0].to, graphLiteralNode.typeId);
 assert.equal(graphInsertEdgePatchJson.operations[0].target, "type");
 assert.equal(zero(["graph", "validate", graphInsertedEdgePath]).stdout, "program graph ok\n");
+writeFileSync(graphPatchEmptyTypeEdgePath, [
+  "zero-program-graph-patch v1",
+  `expect graphHash "${graphDumpJson.graphHash}"`,
+  `insertEdge from="node:000001" to="" edge="resolvedType" target="type" order="0"`,
+  "",
+].join("\n"));
+const graphEmptyTypeEdgePatchJson = json(["graph", "patch", "--json", graphDumpPath, graphPatchEmptyTypeEdgePath], { allowFailure: true });
+assert.notEqual(graphEmptyTypeEdgePatchJson.code, 0);
+assert.equal(graphEmptyTypeEdgePatchJson.body.ok, false);
+assert.equal(graphEmptyTypeEdgePatchJson.body.diagnostic.code, "GPH004");
+assert.equal(graphEmptyTypeEdgePatchJson.body.operations[0].ok, false);
+assert.equal(graphEmptyTypeEdgePatchJson.body.operations[0].code, "GPH004");
+assert.equal(graphEmptyTypeEdgePatchJson.body.operations[0].to, "");
+assert.equal(graphEmptyTypeEdgePatchJson.body.saved, null);
 writeFileSync(graphPatchRenamePath, [
   "zero-program-graph-patch v1",
   `expect graphHash "${graphDumpJson.graphHash}"`,
