@@ -891,15 +891,6 @@ bool z_resolve_package_metadata(const char *manifest_path, const char *manifest,
     snprintf(diag->help, sizeof(diag->help), "use an exe target for the native bootstrap compiler");
     return false;
   }
-  if (!parsed_manifest->main_path) {
-    diag->code = 2;
-    diag->path = z_strdup(manifest_path);
-    diag->line = 1;
-    diag->column = 1;
-    snprintf(diag->message, sizeof(diag->message), "zero.json is missing targets.cli.main");
-    return false;
-  }
-
   SourceInput metadata = {0};
   metadata.manifest_path = z_strdup(manifest_path);
   metadata.package_root = dirname_of(manifest_path);
