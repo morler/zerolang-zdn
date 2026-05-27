@@ -164,6 +164,34 @@ static void parses_separate_boolean_comparisons(void) {
   expect_accepts(source, "separate boolean comparisons");
 }
 
+static void parses_public_declarations_and_extern_types(void) {
+  const char *source =
+    "pub extern type CPoint\n"
+    "\n"
+    "pub type Point {\n"
+    "    x: i32,\n"
+    "}\n"
+    "\n"
+    "pub const answer: i32 = 42\n"
+    "pub alias Count = i32\n"
+    "\n"
+    "pub interface Reader {\n"
+    "    fn read(self: Self) -> i32\n"
+    "}\n";
+  ZDiag diag = {0};
+  ZCanonicalFacts facts = {0};
+  expect(parse_source(source, &facts, &diag), diag.message);
+  expect(facts.declaration_count == 5, "expected public declarations");
+  expect(facts.type_count == 1, "expected public concrete type declaration");
+  expect(facts.interface_count == 1, "expected public interface declaration");
+}
+
+static void parses_empty_return_but_not_empty_checks(void) {
+  expect_accepts("fn ok() -> Void {\n    return\n}\n", "empty return");
+  expect_rejects("fn bad() -> Void {\n    check\n}\n", "empty check");
+  expect_rejects("fn bad() -> Void {\n    expect\n}\n", "empty expect");
+}
+
 static void rejects_noncanonical_spellings(void) {
   expect_rejects("fun main() -> Void {}\n", "fun keyword");
   expect_rejects("shape Point {\n    x: i32,\n}\n", "shape keyword");
@@ -200,6 +228,8 @@ int main(int argc, char **argv) {
   parses_fallibility_choices_and_interfaces();
   parses_nested_generic_type_commas();
   parses_separate_boolean_comparisons();
+  parses_public_declarations_and_extern_types();
+  parses_empty_return_but_not_empty_checks();
   rejects_noncanonical_spellings();
   for (int i = 1; i + 1 < argc; i += 2) parse_file_arg(argv[i], argv[i + 1]);
   printf("canonical text smoke ok\n");

@@ -453,7 +453,8 @@ static bool canon_parse_statement(CanonParser *parser, size_t depth) {
   if (parser->facts) parser->facts->statement_count++;
   if (canon_accept_word(parser, "mut")) return canon_fail(parser->diag, start, "mutable locals use var", "var", "mut");
   if (canon_accept_word(parser, "let") || canon_accept_word(parser, "var")) return canon_parse_let_or_var(parser);
-  if (canon_accept_word(parser, "return") || canon_accept_word(parser, "check") || canon_accept_word(parser, "expect")) return canon_parse_expr_line(parser, true);
+  if (canon_accept_word(parser, "return")) return canon_parse_expr_line(parser, true);
+  if (canon_accept_word(parser, "check") || canon_accept_word(parser, "expect")) return canon_parse_expr_line(parser, false);
   if (canon_accept_word(parser, "raise")) return canon_expect_word_token(parser, "expected error name") && canon_expect_statement_end(parser, "unexpected tokens after raise statement");
   if (canon_accept_word(parser, "if")) return canon_parse_if(parser, depth);
   if (canon_accept_word(parser, "while")) {
@@ -508,6 +509,78 @@ static bool canon_parse_interface(CanonParser *parser) {
   return canon_expect_symbol(parser, "}", "expected interface close");
 }
 
+static bool canon_expect_declaration_end(CanonParser *parser, const char *message) {
+  const ZCanonicalToken *token = canon_peek(parser);
+  return (!token || token->kind == Z_CANON_TOKEN_EOF || token->kind == Z_CANON_TOKEN_NEWLINE || token->kind == Z_CANON_TOKEN_COMMENT) ? true : canon_fail(parser->diag, token, message, "line end", token->text);
+}
+
+static bool canon_parse_type_declaration(CanonParser *parser, bool was_extern) {
+  if (!canon_expect_word_token(parser, "expected type name")) return false;
+  if (!canon_parse_type_params(parser)) return false;
+  if (was_extern) {
+    if (canon_is_symbol_text(canon_peek(parser), "{")) return canon_parse_field_list(parser, true);
+    return canon_expect_declaration_end(parser, "unexpected tokens after extern type declaration");
+  }
+  if (parser->facts) parser->facts->type_count++;
+  return canon_parse_field_list(parser, true);
+}
+
+static bool canon_parse_extern_declaration(CanonParser *parser, const ZCanonicalToken *start) {
+  if (canon_accept_word(parser, "type")) return canon_parse_type_declaration(parser, true);
+  if (!canon_accept_word(parser, "c")) return canon_fail(parser->diag, canon_peek(parser), "expected extern c or extern type", "extern c", start->text);
+  if (canon_peek(parser)->kind != Z_CANON_TOKEN_STRING) return canon_fail(parser->diag, canon_peek(parser), "expected C header string", "string", canon_peek(parser)->text);
+  parser->pos++;
+  if (!canon_accept_word(parser, "as")) return canon_fail(parser->diag, canon_peek(parser), "expected C import alias", "as", canon_peek(parser)->text);
+  if (!canon_expect_word_token(parser, "expected C import alias name")) return false;
+  return canon_expect_declaration_end(parser, "unexpected tokens after extern c declaration");
+}
+
+static bool canon_parse_enum_declaration(CanonParser *parser) {
+  if (!canon_expect_word_token(parser, "expected enum name")) return false;
+  if (!canon_parse_type_params(parser)) return false;
+  if (parser->facts) parser->facts->enum_count++;
+  return canon_parse_field_list(parser, false);
+}
+
+static bool canon_parse_choice_declaration(CanonParser *parser) {
+  if (!canon_expect_word_token(parser, "expected choice name")) return false;
+  if (!canon_parse_type_params(parser)) return false;
+  if (parser->facts) parser->facts->choice_count++;
+  return canon_parse_field_list(parser, true);
+}
+
+static bool canon_parse_alias_declaration(CanonParser *parser) {
+  if (!canon_expect_word_token(parser, "expected alias name")) return false;
+  if (!canon_expect_symbol(parser, "=", "expected alias target")) return false;
+  return canon_parse_expr_line(parser, false);
+}
+
+static bool canon_parse_const_declaration(CanonParser *parser) {
+  if (!canon_expect_word_token(parser, "expected const name")) return false;
+  if (!canon_expect_symbol(parser, ":", "expected const type")) return false;
+  if (!canon_parse_type_until(parser, "=", NULL)) return false;
+  if (!canon_expect_symbol(parser, "=", "expected const value")) return false;
+  return canon_parse_expr_line(parser, false);
+}
+
+static bool canon_parse_public_declaration(CanonParser *parser, const ZCanonicalToken *start) {
+  if (canon_accept_word(parser, "fn")) {
+    if (parser->facts) parser->facts->function_count++;
+    return canon_parse_signature(parser, true, 1);
+  }
+  if (canon_accept_word(parser, "type")) return canon_parse_type_declaration(parser, false);
+  if (canon_accept_word(parser, "extern")) return canon_parse_extern_declaration(parser, start);
+  if (canon_accept_word(parser, "enum")) return canon_parse_enum_declaration(parser);
+  if (canon_accept_word(parser, "choice")) return canon_parse_choice_declaration(parser);
+  if (canon_accept_word(parser, "interface")) {
+    if (parser->facts) parser->facts->interface_count++;
+    return canon_parse_interface(parser);
+  }
+  if (canon_accept_word(parser, "alias")) return canon_parse_alias_declaration(parser);
+  if (canon_accept_word(parser, "const")) return canon_parse_const_declaration(parser);
+  return canon_fail(parser->diag, canon_peek(parser), "expected public declaration", "fn, type, extern type, enum, choice, interface, alias, or const", canon_peek(parser) ? canon_peek(parser)->text : "end of file");
+}
+
 static bool canon_parse_declaration(CanonParser *parser) {
   canon_skip_newlines(parser);
   const ZCanonicalToken *start = canon_peek(parser);
@@ -516,11 +589,7 @@ static bool canon_parse_declaration(CanonParser *parser) {
   if (parser->facts) parser->facts->declaration_count++;
   if (canon_accept_word(parser, "fun")) return canon_fail(parser->diag, start, "function declarations use fn", "fn", "fun");
   if (canon_accept_word(parser, "shape")) return canon_fail(parser->diag, start, "record declarations use type", "type", "shape");
-  if (canon_accept_word(parser, "pub")) {
-    if (!canon_accept_word(parser, "fn")) return canon_fail(parser->diag, canon_peek(parser), "expected public function", "fn", canon_peek(parser)->text);
-    if (parser->facts) parser->facts->function_count++;
-    return canon_parse_signature(parser, true, 1);
-  }
+  if (canon_accept_word(parser, "pub")) return canon_parse_public_declaration(parser, start);
   if (canon_accept_word(parser, "export")) {
     if (!canon_accept_word(parser, "c") || !canon_accept_word(parser, "fn")) return canon_fail(parser->diag, canon_peek(parser), "expected export c fn", "export c fn", start->text);
     if (parser->facts) parser->facts->function_count++;
@@ -530,32 +599,10 @@ static bool canon_parse_declaration(CanonParser *parser) {
     if (parser->facts) parser->facts->function_count++;
     return canon_parse_signature(parser, true, 1);
   }
-  if (canon_accept_word(parser, "type") || canon_accept_word(parser, "extern")) {
-    bool was_extern = canon_is_word_text(start, "extern");
-    if (was_extern && (!canon_accept_word(parser, "type"))) {
-      if (!canon_accept_word(parser, "c")) return canon_fail(parser->diag, canon_peek(parser), "expected extern c or extern type", "extern c", start->text);
-      if (canon_peek(parser)->kind != Z_CANON_TOKEN_STRING) return canon_fail(parser->diag, canon_peek(parser), "expected C header string", "string", canon_peek(parser)->text);
-      parser->pos++;
-      if (!canon_accept_word(parser, "as")) return canon_fail(parser->diag, canon_peek(parser), "expected C import alias", "as", canon_peek(parser)->text);
-      return canon_expect_word_token(parser, "expected C import alias name");
-    }
-    if (!canon_expect_word_token(parser, "expected type name")) return false;
-    if (!canon_parse_type_params(parser)) return false;
-    if (parser->facts && !was_extern) parser->facts->type_count++;
-    return canon_parse_field_list(parser, true);
-  }
-  if (canon_accept_word(parser, "enum")) {
-    if (!canon_expect_word_token(parser, "expected enum name")) return false;
-    if (!canon_parse_type_params(parser)) return false;
-    if (parser->facts) parser->facts->enum_count++;
-    return canon_parse_field_list(parser, false);
-  }
-  if (canon_accept_word(parser, "choice")) {
-    if (!canon_expect_word_token(parser, "expected choice name")) return false;
-    if (!canon_parse_type_params(parser)) return false;
-    if (parser->facts) parser->facts->choice_count++;
-    return canon_parse_field_list(parser, true);
-  }
+  if (canon_accept_word(parser, "type")) return canon_parse_type_declaration(parser, false);
+  if (canon_accept_word(parser, "extern")) return canon_parse_extern_declaration(parser, start);
+  if (canon_accept_word(parser, "enum")) return canon_parse_enum_declaration(parser);
+  if (canon_accept_word(parser, "choice")) return canon_parse_choice_declaration(parser);
   if (canon_accept_word(parser, "interface")) {
     if (parser->facts) parser->facts->interface_count++;
     return canon_parse_interface(parser);
@@ -567,18 +614,8 @@ static bool canon_parse_declaration(CanonParser *parser) {
     return canon_parse_block(parser, 1);
   }
   if (canon_accept_word(parser, "use")) return canon_parse_expr_line(parser, false);
-  if (canon_accept_word(parser, "alias")) {
-    if (!canon_expect_word_token(parser, "expected alias name")) return false;
-    if (!canon_expect_symbol(parser, "=", "expected alias target")) return false;
-    return canon_parse_expr_line(parser, false);
-  }
-  if (canon_accept_word(parser, "const")) {
-    if (!canon_expect_word_token(parser, "expected const name")) return false;
-    if (!canon_expect_symbol(parser, ":", "expected const type")) return false;
-    if (!canon_parse_type_until(parser, "=", NULL)) return false;
-    if (!canon_expect_symbol(parser, "=", "expected const value")) return false;
-    return canon_parse_expr_line(parser, false);
-  }
+  if (canon_accept_word(parser, "alias")) return canon_parse_alias_declaration(parser);
+  if (canon_accept_word(parser, "const")) return canon_parse_const_declaration(parser);
   return canon_fail(parser->diag, start, "expected canonical declaration", "declaration", start->text);
 }
 
