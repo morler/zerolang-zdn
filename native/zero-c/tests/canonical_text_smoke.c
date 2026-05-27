@@ -244,6 +244,20 @@ static void parses_character_literals(void) {
   expect_accepts(source, "character literals");
 }
 
+static void parses_generic_calls_and_array_repeats(void) {
+  const char *source =
+    "fn choose<T, U>(left: T, right: U) -> T {\n"
+    "    return left\n"
+    "}\n"
+    "\n"
+    "fn caller(a: i32, b: u8) -> Void {\n"
+    "    let value: i32 = choose<i32, u8>(a, b)\n"
+    "    let bytes: [4]u8 = [0_u8; 4]\n"
+    "    check value == 1 || bytes[0] == 0_u8\n"
+    "}\n";
+  expect_accepts(source, "generic calls and array repeats");
+}
+
 static void parses_empty_return_but_not_empty_checks(void) {
   expect_accepts("fn ok() -> Void {\n    return\n}\n", "empty return");
   expect_rejects("fn bad() -> Void {\n    check\n}\n", "empty check");
@@ -261,6 +275,7 @@ static void rejects_noncanonical_spellings(void) {
   expect_rejects("pub fn main(world: World) -> Void raises {\n    check world.out.write \"bad\\n\"\n}\n", "space call");
   expect_rejects("pub fn main(world: World) -> Void raises {\n    let ok: Bool = 1 < 2 < 3\n}\n", "chained comparison");
   expect_rejects("pub fn main(world: World) -> Void raises {\n    let ok: Bool = a == b == c\n}\n", "chained equality comparison");
+  expect_rejects("fn bad(a: i32, b: i32, c: i32) -> Void {\n    let ok: Bool = a < b > (c)\n}\n", "generic-looking chained comparison");
   expect_rejects("fn bad(items: Items) -> Void {\n    for item in items all {\n        return\n    }\n}\n", "space call in for range");
   expect_rejects("fn bad(items: Items) -> Void {\n    for item in 1 < 2 < 3 {\n        return\n    }\n}\n", "chained comparison in for range");
   expect_rejects("type Pair<T U> {\n    left: T,\n    right: U,\n}\n", "missing type parameter comma");
@@ -281,6 +296,7 @@ static void rejects_noncanonical_spellings(void) {
   expect_rejects("fn bad() -> Void {\n    let value: char = ''\n}\n", "empty character literal");
   expect_rejects("fn bad() -> Void {\n    let value: char = 'ab'\n}\n", "wide character literal");
   expect_rejects("fn bad() -> Void {\n    let value: char = '\\q'\n}\n", "invalid character escape");
+  expect_rejects("fn bad() -> Void {\n    let text: String = \"hello\\\x0aworld\"\n}\n", "escaped string newline");
   expect_rejects("alias Bad = 1 + 2\n", "alias expression target");
   expect_rejects("pub alias Bad = 1 + 2\n", "public alias expression target");
   expect_rejects("fn first() -> Void {} fn second() -> Void {}\n", "same-line declarations");
@@ -307,6 +323,7 @@ int main(int argc, char **argv) {
   records_block_open_locations();
   parses_public_declarations_and_extern_types();
   parses_character_literals();
+  parses_generic_calls_and_array_repeats();
   parses_empty_return_but_not_empty_checks();
   rejects_noncanonical_spellings();
   for (int i = 1; i + 1 < argc; i += 2) parse_file_arg(argv[i], argv[i + 1]);

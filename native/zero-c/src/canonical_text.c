@@ -30,6 +30,10 @@ static bool canon_is_symbol_text(const ZCanonicalToken *token, const char *text)
   return token && token->kind == Z_CANON_TOKEN_SYMBOL && canon_text_eq(token->text, text);
 }
 
+static bool canon_tokens_connected(const ZCanonicalToken *left, const ZCanonicalToken *right) {
+  return left && right && left->offset + left->length == right->offset;
+}
+
 static bool canon_fail(ZDiag *diag, const ZCanonicalToken *token, const char *message, const char *expected, const char *actual) {
   if (diag) {
     diag->code = 100;
@@ -87,6 +91,10 @@ static bool canon_scan_string(const char *source, size_t *offset, int *column, Z
   while (source[*offset] && source[*offset] != '"') {
     if (source[*offset] == '\n') return canon_fail(diag, NULL, "unterminated string literal", "closing quote", "newline");
     if (source[*offset] == '\\' && source[*offset + 1]) {
+      ZCanonicalToken escape = {Z_CANON_TOKEN_STRING, NULL, line, *column, *offset, 1};
+      if (source[*offset + 1] == '\n' || source[*offset + 1] == '\r') {
+        return canon_fail(diag, &escape, "escaped newlines are not canonical string literals", "escaped byte or closing quote", "newline");
+      }
       *offset += 2;
       *column += 2;
       continue;
@@ -329,12 +337,44 @@ static bool canon_expr_prefix_symbol(const ZCanonicalToken *token) {
   return canon_is_symbol_text(token, "&") || canon_is_symbol_text(token, "*") || canon_is_symbol_text(token, "!") || canon_is_symbol_text(token, "-") || canon_is_symbol_text(token, "+");
 }
 
+static bool canon_validate_type_span(CanonParser *parser, size_t start, size_t end);
+
+static bool canon_generic_call_span(CanonParser *parser, size_t expr_start, size_t expr_end, size_t open_index, size_t *close_index) {
+  if (open_index == expr_start || open_index >= expr_end) return false;
+  const ZCanonicalToken *previous = &parser->tokens->items[open_index - 1];
+  const ZCanonicalToken *open = &parser->tokens->items[open_index];
+  if (previous->kind != Z_CANON_TOKEN_WORD || !canon_is_symbol_text(open, "<") || !canon_tokens_connected(previous, open)) return false;
+
+  int angle = 1;
+  for (size_t index = open_index + 1; index < expr_end; index++) {
+    const ZCanonicalToken *token = &parser->tokens->items[index];
+    if (canon_is_symbol_text(token, "<")) {
+      angle++;
+      continue;
+    }
+    if (!canon_is_symbol_text(token, ">")) continue;
+    angle--;
+    if (angle != 0) continue;
+
+    if (index + 1 >= expr_end) return false;
+    const ZCanonicalToken *next = &parser->tokens->items[index + 1];
+    if (!(canon_is_symbol_text(next, "(") || canon_is_symbol_text(next, "{"))) return false;
+    if (!canon_tokens_connected(token, next)) return false;
+    *close_index = index;
+    return true;
+  }
+  return false;
+}
+
 static bool canon_validate_expr_shape(CanonParser *parser, size_t start, size_t end) {
   if (start == end) return true;
   bool expect_operand = true;
   bool saw_operand = false;
   int delimiter_depth = 0;
   int brace_depth = 0;
+  size_t bracket_depth = 0;
+  bool bracket_literal[128] = {0};
+  size_t bracket_repeat_count[128] = {0};
   for (size_t i = start; i < end; i++) {
     const ZCanonicalToken *token = &parser->tokens->items[i];
     const ZCanonicalToken *previous = i > start ? &parser->tokens->items[i - 1] : NULL;
@@ -360,6 +400,11 @@ static bool canon_validate_expr_shape(CanonParser *parser, size_t start, size_t 
       if (canon_is_symbol_text(token, "{") && expect_operand) return canon_fail(parser->diag, token, "expected expression before object literal", "expression", "{");
       delimiter_depth++;
       if (canon_is_symbol_text(token, "{")) brace_depth++;
+      if (canon_is_symbol_text(token, "[")) {
+        if (bracket_depth + 1 < sizeof(bracket_literal) / sizeof(bracket_literal[0])) bracket_depth++;
+        bracket_literal[bracket_depth] = expect_operand;
+        bracket_repeat_count[bracket_depth] = 0;
+      }
       expect_operand = true;
       continue;
     }
@@ -369,6 +414,11 @@ static bool canon_validate_expr_shape(CanonParser *parser, size_t start, size_t 
       }
       if (delimiter_depth > 0) delimiter_depth--;
       if (canon_is_symbol_text(token, "}") && brace_depth > 0) brace_depth--;
+      if (canon_is_symbol_text(token, "]")) {
+        bracket_repeat_count[bracket_depth] = 0;
+        bracket_literal[bracket_depth] = false;
+        if (bracket_depth > 0) bracket_depth--;
+      }
       expect_operand = false;
       saw_operand = true;
       continue;
@@ -385,6 +435,13 @@ static bool canon_validate_expr_shape(CanonParser *parser, size_t start, size_t 
       expect_operand = true;
       continue;
     }
+    if (canon_is_symbol_text(token, ";")) {
+      if (expect_operand) return canon_fail(parser->diag, token, "expected expression before array repeat separator", "expression", ";");
+      if (bracket_depth == 0 || !bracket_literal[bracket_depth]) return canon_fail(parser->diag, token, "unexpected ';' in expression", "array repeat literal", ";");
+      if (++bracket_repeat_count[bracket_depth] > 1) return canon_fail(parser->diag, token, "array repeat literals use one separator", "one ';'", ";");
+      expect_operand = true;
+      continue;
+    }
     if (canon_is_symbol_text(token, ".")) {
       if (expect_operand) return canon_fail(parser->diag, token, "expected expression before member access", "expression", ".");
       expect_operand = true;
@@ -393,6 +450,14 @@ static bool canon_validate_expr_shape(CanonParser *parser, size_t start, size_t 
     if (canon_is_symbol_text(token, "..")) {
       expect_operand = true;
       continue;
+    }
+    if (canon_is_symbol_text(token, "<")) {
+      size_t generic_close = 0;
+      if (canon_generic_call_span(parser, start, end, i, &generic_close)) {
+        if (!canon_validate_type_span(parser, i + 1, generic_close)) return false;
+        i = generic_close;
+        continue;
+      }
     }
     if (expect_operand && canon_expr_prefix_symbol(token)) continue;
     if (canon_expr_binary_symbol(token)) {
@@ -428,21 +493,12 @@ static bool canon_validate_expr(CanonParser *parser, size_t start, size_t end) {
       continue;
     }
     if (canon_is_symbol_text(token, "<")) {
-      int depth = 1;
-      bool generic_call = false;
-      for (size_t j = i + 1; j < end; j++) {
-        if (canon_is_symbol_text(&parser->tokens->items[j], "<")) depth++;
-        else if (canon_is_symbol_text(&parser->tokens->items[j], ">") && --depth == 0) {
-          generic_call =
-            i > start &&
-            parser->tokens->items[i - 1].kind == Z_CANON_TOKEN_WORD &&
-            j + 1 < end &&
-            (canon_is_symbol_text(&parser->tokens->items[j + 1], "(") || canon_is_symbol_text(&parser->tokens->items[j + 1], "{"));
-          if (generic_call) i = j;
-          break;
-        }
+      size_t generic_close = 0;
+      if (canon_generic_call_span(parser, start, end, i, &generic_close)) {
+        i = generic_close;
+        continue;
       }
-      if (!generic_call && ++compare_counts[compare_depth] > 1) {
+      if (++compare_counts[compare_depth] > 1) {
         return canon_fail(parser->diag, token, "chained comparisons are not canonical text", "separate comparisons", "chained comparison");
       }
       continue;
