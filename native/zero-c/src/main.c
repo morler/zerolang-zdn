@@ -11748,7 +11748,7 @@ int main(int argc, char **argv) {
     print_help();
     return 0;
   }
-  Command command = {.format = FORMAT_ZDN};
+  Command command = {.format = FORMAT_TEXT};
   if (!parse_command(argc, argv, &command)) {
     print_help();
     return 1;
