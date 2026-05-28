@@ -698,14 +698,92 @@ static void imports_public_c_and_use_source_ranges(void) {
   Program program = {0};
   expect(z_parse_canonical_text_program_source(source, &program, &diag), diag.message);
   expect(program.c_imports.len == 1, "expected public C import");
-  expect(strcmp(program.c_imports.items[0].header, "conformance/c/simple.h") == 0, "expected decoded public C header path");
-  expect(strcmp(program.c_imports.items[0].alias, "c") == 0, "expected public C import alias");
+  CImport *c_import = &program.c_imports.items[0];
+  expect(strcmp(c_import->header, "conformance/c/simple.h") == 0, "expected decoded public C header path");
+  expect(strcmp(c_import->alias, "c") == 0, "expected public C import alias");
+  expect(c_import->line == 1, "expected public C import source range to start at declaration line");
+  expect(c_import->column == 1, "expected public C import source range to start at declaration column");
   expect(program.use_imports.len == 1, "expected use import");
   UseImport *use_import = &program.use_imports.items[0];
   expect(strcmp(use_import->module, "package.module") == 0, "expected use module");
   expect(strcmp(use_import->alias, "module") == 0, "expected use alias");
   expect(use_import->column == 1, "expected use source range to start at declaration");
   expect(use_import->end_column == 29, "expected use source range to include alias");
+  z_free_program(&program);
+}
+
+static void records_declaration_start_source_locations(void) {
+  const char *source =
+    "pub type PublicPoint {\n"
+    "    x: i32,\n"
+    "    pub fn reset(self: Self) -> Void {\n"
+    "        return\n"
+    "    }\n"
+    "}\n"
+    "pub const answer: i32 = 42\n"
+    "pub alias Count = i32\n"
+    "pub interface Reader {\n"
+    "    fn read(self: Self) -> i32\n"
+    "}\n"
+    "pub fn main(world: World) -> Void raises {\n"
+    "    return\n"
+    "}\n"
+    "export c fn exported() -> i32 {\n"
+    "    return 1\n"
+    "}\n"
+    "extern type CPoint\n"
+    "enum Color: u8 {\n"
+    "    red,\n"
+    "}\n"
+    "choice Result {\n"
+    "    ok: i32,\n"
+    "}\n"
+    "test \"range\" {\n"
+    "    expect true\n"
+    "}\n";
+  ZDiag diag = {0};
+  Program program = {0};
+  expect(z_parse_canonical_text_program_source(source, &program, &diag), diag.message);
+
+  expect(program.shapes.len == 2, "expected public and extern shapes");
+  expect(program.shapes.items[0].line == 1, "expected public type to start at pub line");
+  expect(program.shapes.items[0].column == 1, "expected public type to start at pub column");
+  expect(program.shapes.items[0].methods.len == 1, "expected public type method");
+  expect(program.shapes.items[0].methods.items[0].line == 3, "expected type method to start at pub line");
+  expect(program.shapes.items[0].methods.items[0].column == 5, "expected type method to start at pub column");
+  expect(program.shapes.items[1].line == 18, "expected extern type to start at extern line");
+  expect(program.shapes.items[1].column == 1, "expected extern type to start at extern column");
+
+  expect(program.consts.len == 1, "expected const declaration");
+  expect(program.consts.items[0].line == 7, "expected public const to start at pub line");
+  expect(program.consts.items[0].column == 1, "expected public const to start at pub column");
+  expect(program.aliases.len == 1, "expected alias declaration");
+  expect(program.aliases.items[0].line == 8, "expected public alias to start at pub line");
+  expect(program.aliases.items[0].column == 1, "expected public alias to start at pub column");
+
+  expect(program.interfaces.len == 1, "expected interface declaration");
+  expect(program.interfaces.items[0].line == 9, "expected public interface to start at pub line");
+  expect(program.interfaces.items[0].column == 1, "expected public interface to start at pub column");
+  expect(program.interfaces.items[0].methods.len == 1, "expected interface method");
+  expect(program.interfaces.items[0].methods.items[0].line == 10, "expected interface method to start at fn line");
+  expect(program.interfaces.items[0].methods.items[0].column == 5, "expected interface method to start at fn column");
+
+  expect(program.functions.len == 3, "expected function, export, and test declarations");
+  expect(program.functions.items[0].line == 12, "expected public function to start at pub line");
+  expect(program.functions.items[0].column == 1, "expected public function to start at pub column");
+  expect(program.functions.items[1].line == 15, "expected exported function to start at export line");
+  expect(program.functions.items[1].column == 1, "expected exported function to start at export column");
+  expect(program.functions.items[2].is_test, "expected generated test function");
+  expect(program.functions.items[2].line == 25, "expected test function to start at test line");
+  expect(program.functions.items[2].column == 1, "expected test function to start at test column");
+
+  expect(program.enums.len == 1, "expected enum declaration");
+  expect(program.enums.items[0].line == 19, "expected enum to start at enum line");
+  expect(program.enums.items[0].column == 1, "expected enum to start at enum column");
+  expect(program.choices.len == 1, "expected choice declaration");
+  expect(program.choices.items[0].line == 22, "expected choice to start at choice line");
+  expect(program.choices.items[0].column == 1, "expected choice to start at choice column");
+
   z_free_program(&program);
 }
 
@@ -1097,6 +1175,7 @@ int main(int argc, char **argv) {
   parses_empty_return_but_not_empty_checks();
   parses_use_declarations_and_zero_arg_calls();
   imports_public_c_and_use_source_ranges();
+  records_declaration_start_source_locations();
   parses_assignment_statements();
   parses_effectful_expression_forms();
   imports_decoded_literals_and_prefix_forms();
