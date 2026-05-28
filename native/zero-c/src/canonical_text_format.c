@@ -7,15 +7,16 @@ typedef struct {
   ZBuf *out;
   bool *compact_angles;
   const ZCanonicalToken *previous;
+  const ZCanonicalToken *before_previous;
   const ZCanonicalToken *line_first;
   size_t indent;
-  bool line_start;
-  bool line_has_assignment;
-  bool *multiline_braces;
-  bool *list_braces;
+  bool line_start, line_has_assignment, line_has_list_declaration;
+  unsigned char *brace_flags;
   size_t brace_depth;
   size_t brace_cap;
 } CanonFormat;
+
+enum { FMT_BRACE_MULTILINE = 1, FMT_BRACE_LIST = 2, FMT_BRACE_MATCH = 4 };
 
 static bool fmt_text_eq(const char *left, const char *right) {
   if (!left || !right) return left == right;
@@ -53,6 +54,7 @@ static void fmt_newline(CanonFormat *fmt) {
   fmt->line_start = true;
   fmt->line_first = NULL;
   fmt->line_has_assignment = false;
+  fmt->line_has_list_declaration = false;
 }
 
 static void fmt_blank_line(CanonFormat *fmt) {
@@ -134,25 +136,16 @@ static bool fmt_compact_angle_pair(const CanonFormat *fmt, const ZCanonicalToken
   return fmt_token_is_compact_angle(fmt, left) && fmt_is_symbol(left, ">") && (fmt_is_symbol(right, ">") || fmt_is_symbol(right, "("));
 }
 
-static void fmt_push_brace(CanonFormat *fmt, bool multiline, bool list) {
+static void fmt_push_brace(CanonFormat *fmt, unsigned char flags) {
   if (fmt->brace_depth == fmt->brace_cap) {
     size_t next_cap = z_grow_capacity(fmt->brace_cap, fmt->brace_depth + 1, 64);
-    fmt->multiline_braces = z_checked_reallocarray(fmt->multiline_braces, next_cap, sizeof(bool));
-    fmt->list_braces = z_checked_reallocarray(fmt->list_braces, next_cap, sizeof(bool));
+    fmt->brace_flags = z_checked_reallocarray(fmt->brace_flags, next_cap, sizeof(unsigned char));
     fmt->brace_cap = next_cap;
   }
-  fmt->multiline_braces[fmt->brace_depth] = multiline;
-  fmt->list_braces[fmt->brace_depth] = list;
-  fmt->brace_depth++;
+  fmt->brace_flags[fmt->brace_depth++] = flags;
 }
 
-static bool fmt_current_multiline_brace(const CanonFormat *fmt) {
-  return fmt->brace_depth > 0 && fmt->multiline_braces[fmt->brace_depth - 1];
-}
-
-static bool fmt_current_list_brace(const CanonFormat *fmt) {
-  return fmt->brace_depth > 0 && fmt->list_braces[fmt->brace_depth - 1];
-}
+static bool fmt_current_brace(const CanonFormat *fmt, unsigned char flag) { return fmt->brace_depth > 0 && (fmt->brace_flags[fmt->brace_depth - 1] & flag) != 0; }
 
 static bool fmt_starts_declaration(const ZCanonicalToken *token) {
   return fmt_is_word(token, "use") || fmt_is_word(token, "extern") || fmt_is_word(token, "const") ||
@@ -173,12 +166,6 @@ static bool fmt_line_opens_multiline_brace(const CanonFormat *fmt) {
     fmt_is_symbol(first, ".");
 }
 
-static bool fmt_line_opens_list_brace(const CanonFormat *fmt) {
-  const ZCanonicalToken *first = fmt->line_first;
-  return fmt_is_word(first, "type") || fmt_is_word(first, "packed") || fmt_is_word(first, "extern") ||
-    fmt_is_word(first, "enum") || fmt_is_word(first, "choice");
-}
-
 static bool fmt_operator(const ZCanonicalToken *token) {
   return fmt_is_symbol(token, "=") || fmt_is_symbol(token, "->") || fmt_is_symbol(token, "=>") ||
     fmt_is_symbol(token, "+") || fmt_is_symbol(token, "-") || fmt_is_symbol(token, "*") ||
@@ -188,6 +175,18 @@ static bool fmt_operator(const ZCanonicalToken *token) {
     fmt_is_symbol(token, "+|");
 }
 
+static bool fmt_prefix_context(const ZCanonicalToken *token) {
+  if (!token) return true;
+  if (fmt_operator(token) || fmt_is_symbol(token, "(") || fmt_is_symbol(token, "[") || fmt_is_symbol(token, "{") ||
+      fmt_is_symbol(token, "<") || fmt_is_symbol(token, ">") || fmt_is_symbol(token, ",") || fmt_is_symbol(token, ":") || fmt_is_symbol(token, ";")) return true;
+  return fmt_is_word(token, "if") || fmt_is_word(token, "while") || fmt_is_word(token, "return") || fmt_is_word(token, "check") || fmt_is_word(token, "expect") || fmt_is_word(token, "rescue");
+}
+
+static bool fmt_prefix_operator_pair(const CanonFormat *fmt, const ZCanonicalToken *left, const ZCanonicalToken *right) {
+  if (!left || !right) return false;
+  return fmt_is_symbol(left, "&") || fmt_is_symbol(left, "!") || ((fmt_is_symbol(left, "-") || fmt_is_symbol(left, "+") || fmt_is_symbol(left, "*")) && fmt_prefix_context(fmt->before_previous));
+}
+
 static bool fmt_space_before(const CanonFormat *fmt, const ZCanonicalToken *token) {
   const ZCanonicalToken *prev = fmt->previous;
   if (!prev || fmt->line_start) return false;
@@ -195,7 +194,8 @@ static bool fmt_space_before(const CanonFormat *fmt, const ZCanonicalToken *toke
   if (fmt_is_symbol(token, "}")) return !fmt_is_symbol(prev, "{");
   if (fmt_is_symbol(token, ".") || fmt_is_symbol(prev, ".")) return false;
   if (fmt_is_symbol(token, "..") || fmt_is_symbol(prev, "..")) return false;
-  if (fmt_is_symbol(prev, "&")) return false;
+  if (fmt_prefix_operator_pair(fmt, prev, token)) return false;
+  if (fmt_is_symbol(prev, "]") && token->kind == Z_CANON_TOKEN_WORD && !fmt_is_word(token, "as") && !fmt_is_word(token, "err") && !fmt_is_word(token, "in")) return false;
   if (fmt_compact_angle_pair(fmt, prev, token)) return false;
   if (fmt_is_symbol(token, "(")) {
     if (fmt_is_symbol(prev, "]")) return false;
@@ -222,6 +222,9 @@ static void fmt_emit_token(CanonFormat *fmt, const ZCanonicalToken *token) {
   fmt_append(fmt->out, token->text);
   if (!fmt->line_first && (token->kind != Z_CANON_TOKEN_SYMBOL || fmt_is_symbol(token, "."))) fmt->line_first = token;
   if (fmt_is_symbol(token, "=")) fmt->line_has_assignment = true;
+  if (fmt_is_word(token, "type") || fmt_is_word(token, "packed") || fmt_is_word(token, "extern") ||
+      fmt_is_word(token, "enum") || fmt_is_word(token, "choice")) fmt->line_has_list_declaration = true;
+  fmt->before_previous = fmt->previous;
   fmt->previous = token;
 }
 
@@ -247,8 +250,11 @@ bool z_canonical_text_format(const ZCanonicalTokenVec *tokens, ZBuf *out, ZDiag 
     }
     if (fmt_is_symbol(token, "{")) {
       const ZCanonicalToken *next = fmt_next_significant(tokens, i);
-      bool multiline = next && !fmt_is_symbol(next, "}") && fmt_line_opens_multiline_brace(&fmt);
-      fmt_push_brace(&fmt, multiline, multiline && fmt_line_opens_list_brace(&fmt));
+      bool multiline = next && !fmt_is_symbol(next, "}") && (fmt_line_opens_multiline_brace(&fmt) || fmt_current_brace(&fmt, FMT_BRACE_MATCH));
+      unsigned char flags = multiline ? FMT_BRACE_MULTILINE : 0;
+      if (multiline && fmt.line_has_list_declaration) flags |= FMT_BRACE_LIST;
+      if (multiline && fmt_is_word(fmt.line_first, "match")) flags |= FMT_BRACE_MATCH;
+      fmt_push_brace(&fmt, flags);
       fmt_emit_token(&fmt, token);
       if (multiline) {
         fmt.indent++;
@@ -257,7 +263,7 @@ bool z_canonical_text_format(const ZCanonicalTokenVec *tokens, ZBuf *out, ZDiag 
       continue;
     }
     if (fmt_is_symbol(token, "}")) {
-      bool multiline = fmt_current_multiline_brace(&fmt);
+      bool multiline = fmt_current_brace(&fmt, FMT_BRACE_MULTILINE);
       if (multiline) {
         if (!fmt.line_start) fmt_newline(&fmt);
         if (fmt.indent > 0) fmt.indent--;
@@ -271,7 +277,7 @@ bool z_canonical_text_format(const ZCanonicalTokenVec *tokens, ZBuf *out, ZDiag 
       }
       continue;
     }
-    if (fmt_is_symbol(token, ",") && fmt_current_list_brace(&fmt)) {
+    if (fmt_is_symbol(token, ",") && fmt_current_brace(&fmt, FMT_BRACE_LIST)) {
       fmt_emit_token(&fmt, token);
       const ZCanonicalToken *next = fmt_next_significant(tokens, i);
       if (next && !fmt_is_symbol(next, "}")) fmt_newline(&fmt);
@@ -281,37 +287,38 @@ bool z_canonical_text_format(const ZCanonicalTokenVec *tokens, ZBuf *out, ZDiag 
   }
   fmt_newline(&fmt);
   free(fmt.compact_angles);
-  free(fmt.multiline_braces);
-  free(fmt.list_braces);
+  free(fmt.brace_flags);
   (void)diag;
   return true;
 }
 
 bool z_canonical_text_format_source(const char *source, ZBuf *out, ZDiag *diag) {
-  ZCanonicalTokenVec tokens = z_canonical_text_tokenize(source, diag);
-  if (diag && diag->code != 0) {
+  ZDiag local_diag = {0};
+  ZDiag *active_diag = diag ? diag : &local_diag;
+  ZCanonicalTokenVec tokens = z_canonical_text_tokenize(source, active_diag);
+  if (active_diag->code != 0) {
     z_free_canonical_text_tokens(&tokens);
     return false;
   }
   ZCanonicalTree tree = {0};
   ZCanonicalFacts facts = {0};
-  if (!z_canonical_text_parse(&tokens, &tree, &facts, diag)) {
+  if (!z_canonical_text_parse(&tokens, &tree, &facts, active_diag)) {
     z_free_canonical_text_tree(&tree);
     z_free_canonical_text_tokens(&tokens);
     return false;
   }
-  bool ok = z_canonical_text_format(&tokens, out, diag);
+  bool ok = z_canonical_text_format(&tokens, out, active_diag);
   z_free_canonical_text_tree(&tree);
   z_free_canonical_text_tokens(&tokens);
   if (!ok) return false;
-  ZCanonicalTokenVec formatted_tokens = z_canonical_text_tokenize(out->data ? out->data : "", diag);
-  if (diag && diag->code != 0) {
+  ZCanonicalTokenVec formatted_tokens = z_canonical_text_tokenize(out->data ? out->data : "", active_diag);
+  if (active_diag->code != 0) {
     z_free_canonical_text_tokens(&formatted_tokens);
     return false;
   }
   ZCanonicalTree formatted_tree = {0};
   ZCanonicalFacts formatted_facts = {0};
-  ok = z_canonical_text_parse(&formatted_tokens, &formatted_tree, &formatted_facts, diag);
+  ok = z_canonical_text_parse(&formatted_tokens, &formatted_tree, &formatted_facts, active_diag);
   z_free_canonical_text_tree(&formatted_tree);
   z_free_canonical_text_tokens(&formatted_tokens);
   return ok;

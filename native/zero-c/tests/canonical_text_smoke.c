@@ -157,6 +157,17 @@ static void expect_rejects(const char *source, const char *label) {
   exit(1);
 }
 
+static void expect_format_rejects_without_diag(const char *source, const char *label) {
+  ZBuf formatted = {0};
+  if (!z_canonical_text_format_source(source, &formatted, NULL)) {
+    free(formatted.data);
+    return;
+  }
+  fprintf(stderr, "%s: expected format rejection without caller diag\n%s\n", label, formatted.data ? formatted.data : "");
+  free(formatted.data);
+  exit(1);
+}
+
 static void parses_declarations_and_blocks(void) {
   const char *source =
     "type Point {\n"
@@ -255,6 +266,54 @@ static void formats_deep_nested_blocks(void) {
   smoke_append(&source, "}\n");
   expect_format_roundtrip(source.data ? source.data : "", "deep nested block formatting");
   free(source.data);
+}
+
+static void formats_public_lists_match_patterns_and_prefix_forms(void) {
+  const char *source =
+    "pub type Point{x:i32,y:i32,}\n"
+    "pub choice Result{ok:u8,err:String,}\n"
+    "fn handle(result:Result,ok:Bool,value:i32,ptr:Ptr,bytes:MutSpan<u8>)->u8{\n"
+    "if !ok{\n"
+    "let neg:i32=-value\n"
+    "let pos:i32=+value\n"
+    "let deref:i32=*ptr\n"
+    "let borrowed:MutSpan<u8> = &mut bytes\n"
+    "let array:[4]u8=bytes\n"
+    "return 0_u8\n"
+    "}\n"
+    "match result{.ok(payload){return payload}\n"
+    "_{return 0_u8}}\n"
+    "}\n";
+  const char *expected =
+    "pub type Point {\n"
+    "    x: i32,\n"
+    "    y: i32,\n"
+    "}\n"
+    "\n"
+    "pub choice Result {\n"
+    "    ok: u8,\n"
+    "    err: String,\n"
+    "}\n"
+    "\n"
+    "fn handle(result: Result, ok: Bool, value: i32, ptr: Ptr, bytes: MutSpan<u8>) -> u8 {\n"
+    "    if !ok {\n"
+    "        let neg: i32 = -value\n"
+    "        let pos: i32 = +value\n"
+    "        let deref: i32 = *ptr\n"
+    "        let borrowed: MutSpan<u8> = &mut bytes\n"
+    "        let array: [4]u8 = bytes\n"
+    "        return 0_u8\n"
+    "    }\n"
+    "    match result {\n"
+    "        .ok(payload) {\n"
+    "            return payload\n"
+    "        }\n"
+    "        _ {\n"
+    "            return 0_u8\n"
+    "        }\n"
+    "    }\n"
+    "}\n";
+  expect_formats_to(source, expected, "public lists, match patterns, and prefix forms");
 }
 
 static void parses_fallibility_choices_and_interfaces(void) {
@@ -625,6 +684,7 @@ static void parses_effectful_expression_forms(void) {
 }
 
 static void rejects_noncanonical_spellings(void) {
+  expect_format_rejects_without_diag("fn ok() -> Void {}\n123abc\n", "formatter rejects malformed trailing input without diag");
   expect_rejects("fun main() -> Void {}\n", "fun keyword");
   expect_rejects("shape Point {\n    x: i32,\n}\n", "shape keyword");
   expect_rejects("pub fn main(world: World) -> Void raises {\n    let value = 1\n}\n", "missing local type");
@@ -724,6 +784,7 @@ int main(int argc, char **argv) {
   formats_core_declarations_and_blocks();
   formats_angles_comparisons_and_ranges_canonically();
   formats_deep_nested_blocks();
+  formats_public_lists_match_patterns_and_prefix_forms();
   parses_fallibility_choices_and_interfaces();
   parses_nested_generic_type_commas();
   parses_separate_boolean_comparisons();
