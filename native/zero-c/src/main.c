@@ -5477,7 +5477,7 @@ static void init_direct_backend_diag(ZDiag *diag, const Command *command, const 
 static int return_direct_backend_error(const Command *command, const SourceInput *input, const ZTargetInfo *target, const char *emit_kind, const char *reason, IrProgram *ir, Program *program) {
   ZDiag diag;
   init_direct_backend_diag(&diag, command, input, target, emit_kind, reason);
-  if (command && command->format != FORMAT_TEXT) print_diag_json(input ? input->source_file : NULL, &diag);
+  if (command && command->format == FORMAT_JSON) print_diag_json(input ? input->source_file : NULL, &diag);
   else print_diag(input ? input->source_file : NULL, &diag);
   if (ir) z_free_ir_program(ir);
   if (program) z_free_program(program);
@@ -5489,7 +5489,7 @@ static int return_buildability_error(const Command *command, const SourceInput *
     z_map_source_diag(input, diag);
     if (!diag->path) diag->path = input->source_file;
   }
-  if (command && command->format != FORMAT_TEXT) print_diag_json(input ? input->source_file : NULL, diag);
+  if (command && command->format == FORMAT_JSON) print_diag_json(input ? input->source_file : NULL, diag);
   else print_diag(input ? input->source_file : NULL, diag);
   if (ir) z_free_ir_program(ir);
   if (program) z_free_program(program);
@@ -8055,7 +8055,7 @@ static int run_tests_direct(const Command *command, const SourceInput *input, co
     zdn_object_end(&buf, 1);
     fputs(buf.data, stdout);
     zbuf_free(&buf);
-  } else if (command && command->format != FORMAT_TEXT) {
+  } else if (command && command->format == FORMAT_JSON) {
     ZBuf buf;
     zbuf_init(&buf);
     zbuf_append(&buf, "{\n  \"schemaVersion\": 1,\n  \"ok\": ");
@@ -9312,7 +9312,7 @@ static int run_size_report_command(const Command *command, SourceInput *input, P
   char *artifact_path = NULL;
   if (!write_size_metadata_artifact(command, input, target, &artifact_path, &artifact_bytes, diag)) {
     const char *path = diag && diag->path ? diag->path : (command && command->out ? command->out : artifact_path);
-    if (command && command->format != FORMAT_TEXT) print_diag_json(path, diag);
+    if (command && command->format == FORMAT_JSON) print_diag_json(path, diag);
     else print_diag(path, diag);
     free(artifact_path);
     return 1;
@@ -10630,7 +10630,7 @@ static int reject_graph_unsupported_out(const Command *command, ZDiag *diag) {
   snprintf(diag->expected, sizeof(diag->expected), "%s", contract.expected ? contract.expected : "zero graph <output-capable-subcommand> --out <file> <input>");
   snprintf(diag->actual, sizeof(diag->actual), "%s", contract.actual ? contract.actual : "zero graph --out");
   snprintf(diag->help, sizeof(diag->help), "%s", contract.help ? contract.help : "remove --out or choose a graph subcommand that writes an artifact");
-  if (command && command->format != FORMAT_TEXT) print_diag_json(diag->path ? diag->path : (command->input ? command->input : "<graph>"), diag);
+  if (command && command->format == FORMAT_JSON) print_diag_json(diag->path ? diag->path : (command->input ? command->input : "<graph>"), diag);
   else print_diag(diag->path ? diag->path : (command && command->input ? command->input : "<graph>"), diag);
   return 1;
 }
@@ -11736,7 +11736,7 @@ static int run_graph_command(const Command *command, SourceInput *input, Program
   }
   ZBuf graph;
   zbuf_init(&graph);
-  if (graph_dump) z_append_program_graph_dump(&graph, input, program, command->format != FORMAT_TEXT);
+  if (graph_dump) z_append_program_graph_dump(&graph, input, program, command->format == FORMAT_JSON);
   else append_graph_json(&graph, input, program, target, command);
   fputs(graph.data, stdout);
   zbuf_free(&graph);
@@ -11916,7 +11916,7 @@ int main(int argc, char **argv) {
 
   bool graph_command_artifact_input = false;
   if (!resolve_graph_command_manifest_input(&command, &graph_command_artifact_input, &diag)) {
-    if (command.format != FORMAT_TEXT) print_diag_json(diag.path ? diag.path : command.input, &diag);
+    if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : command.input, &diag);
     else print_diag(diag.path ? diag.path : command.input, &diag);
     return 1;
   }
@@ -12054,7 +12054,7 @@ int main(int argc, char **argv) {
   const char *direct_graph_manifest_input = command.input;
   bool direct_graph_manifest_command = false;
   if (!resolve_direct_command_manifest_graph_input(&command, &direct_graph_manifest_command, &diag)) {
-    if (command.format != FORMAT_TEXT) print_diag_json(diag.path ? diag.path : command.input, &diag);
+    if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : command.input, &diag);
     else print_diag(diag.path ? diag.path : command.input, &diag);
     return 1;
   }
@@ -12067,14 +12067,14 @@ int main(int argc, char **argv) {
   if (direct_graph_manifest_command || direct_graph_source_command || graph_build_command || graph_run_command || graph_test_command) {
     ZProgramGraphArtifactSource graph_source = {0};
     if (!z_program_graph_prepare_artifact_input(command.input, target, &program, &input, &graph_source, &diag)) {
-      if (command.format != FORMAT_TEXT) print_diag_json(diag.path ? diag.path : command.input, &diag);
+      if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : command.input, &diag);
       else print_diag(diag.path ? diag.path : command.input, &diag);
       z_free_program(&program);
       z_free_source(&input);
       return 1;
     }
     if (direct_graph_manifest_command && !attach_manifest_metadata_to_graph_input(&input, direct_graph_manifest_input, &diag)) {
-      if (command.format != FORMAT_TEXT) print_diag_json(diag.path ? diag.path : direct_graph_manifest_input, &diag);
+      if (command.format == FORMAT_JSON) print_diag_json(diag.path ? diag.path : direct_graph_manifest_input, &diag);
       else print_diag(diag.path ? diag.path : direct_graph_manifest_input, &diag);
       z_free_program(&program);
       z_free_source(&input);
