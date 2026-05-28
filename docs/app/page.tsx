@@ -124,7 +124,7 @@ export default function HomePage() {
             for agents
           </h1>
           <p className="mt-6 max-w-[42rem] text-[clamp(1rem,2vw,1.1875rem)] leading-[1.65] text-muted">
-            zerolang is an experimental graph-first programming language where agents work with semantic program structure instead of raw source text. Source code is still the source of truth; the graph is the compiler-derived interface for inspection, validation, and edits.
+            zerolang is an experimental graph-first programming language where agents work with semantic program structure instead of raw source text.
           </p>
           <InstallCopy />
           <p className="mt-4 max-w-[36rem] text-sm leading-relaxed text-muted">
