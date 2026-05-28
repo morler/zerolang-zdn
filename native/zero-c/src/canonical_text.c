@@ -815,6 +815,12 @@ static bool canon_parse_expr_line(CanonParser *parser, bool allow_empty) {
   return canon_validate_expr(parser, start, parser->pos);
 }
 
+static bool canon_parse_expr_until(CanonParser *parser, const char *stop_a, const char *stop_b, bool allow_empty) {
+  size_t start = parser->pos;
+  if (!canon_parse_until(parser, stop_a, stop_b, allow_empty, false)) return false;
+  return canon_validate_expr(parser, start, parser->pos);
+}
+
 static bool canon_type_static_value_word(const ZCanonicalToken *token) {
   return token && token->kind == Z_CANON_TOKEN_WORD && (canon_text_eq(token->text, "true") || canon_text_eq(token->text, "false") || canon_text_eq(token->text, "null"));
 }
@@ -1215,6 +1221,48 @@ static bool canon_parse_field_list(CanonParser *parser, bool typed_fields) {
   }
 }
 
+static bool canon_expect_type_member_end(CanonParser *parser, const char *message) {
+  const ZCanonicalToken *token = canon_peek(parser);
+  return (!token || token->kind == Z_CANON_TOKEN_EOF || token->kind == Z_CANON_TOKEN_NEWLINE ||
+          token->kind == Z_CANON_TOKEN_COMMENT || canon_is_symbol_text(token, "}")) ?
+    true :
+    canon_fail(parser->diag, token, message, "line end or type close", token->text);
+}
+
+static bool canon_parse_type_field(CanonParser *parser) {
+  if (!canon_expect_word_token(parser, "expected field or method name")) return false;
+  if (!canon_expect_symbol(parser, ":", "expected ':' after field name")) return false;
+  if (!canon_parse_type_until(parser, "=", ",")) return false;
+  if (canon_accept_symbol(parser, "=") && !canon_parse_expr_until(parser, ",", "}", false)) return false;
+  return canon_expect_symbol(parser, ",", "expected trailing comma in type field");
+}
+
+static bool canon_parse_type_method(CanonParser *parser, size_t depth) {
+  const ZCanonicalToken *start = canon_peek(parser);
+  if (canon_accept_word(parser, "pub")) {
+    if (!canon_accept_word(parser, "fn")) {
+      return canon_fail(parser->diag, canon_peek(parser), "expected public type method", "fn", canon_peek(parser) ? canon_peek(parser)->text : "end of file");
+    }
+  } else if (!canon_accept_word(parser, "fn")) {
+    return canon_fail(parser->diag, start, "expected type member", "field or fn method", start ? start->text : "end of file");
+  }
+  if (parser->facts) parser->facts->function_count++;
+  if (!canon_parse_signature(parser, true, depth)) return false;
+  return canon_expect_type_member_end(parser, "unexpected tokens after type method");
+}
+
+static bool canon_parse_type_body(CanonParser *parser, size_t depth) {
+  if (!canon_expect_symbol(parser, "{", "expected type body")) return false;
+  canon_skip_newlines(parser);
+  while (canon_peek(parser) && !canon_is_symbol_text(canon_peek(parser), "}") && canon_peek(parser)->kind != Z_CANON_TOKEN_EOF) {
+    if (canon_is_word_text(canon_peek(parser), "fn") || canon_is_word_text(canon_peek(parser), "pub")) {
+      if (!canon_parse_type_method(parser, depth)) return false;
+    } else if (!canon_parse_type_field(parser)) return false;
+    canon_skip_newlines(parser);
+  }
+  return canon_expect_symbol(parser, "}", "expected type close");
+}
+
 static bool canon_parse_interface(CanonParser *parser) {
   if (!canon_expect_word_token(parser, "expected interface name")) return false;
   if (!canon_parse_type_params(parser)) return false;
@@ -1238,11 +1286,11 @@ static bool canon_parse_type_declaration(CanonParser *parser, bool was_extern) {
   if (!canon_expect_word_token(parser, "expected type name")) return false;
   if (!canon_parse_type_params(parser)) return false;
   if (was_extern) {
-    if (canon_is_symbol_text(canon_peek(parser), "{")) return canon_parse_field_list(parser, true);
+    if (canon_is_symbol_text(canon_peek(parser), "{")) return canon_parse_type_body(parser, 1);
     return canon_expect_declaration_end(parser, "unexpected tokens after extern type declaration");
   }
   if (parser->facts) parser->facts->type_count++;
-  return canon_parse_field_list(parser, true);
+  return canon_parse_type_body(parser, 1);
 }
 
 static bool canon_parse_extern_declaration(CanonParser *parser, const ZCanonicalToken *start) {

@@ -10,6 +10,7 @@ typedef struct {
   const ZCanonicalToken *before_previous;
   const ZCanonicalToken *line_first;
   size_t indent;
+  size_t paren_depth, bracket_depth, angle_depth;
   bool line_start, line_has_assignment, line_has_list_declaration;
   unsigned char *brace_flags;
   size_t brace_depth;
@@ -57,6 +58,9 @@ static void fmt_newline(CanonFormat *fmt) {
   fmt->line_first = NULL;
   fmt->line_has_assignment = false;
   fmt->line_has_list_declaration = false;
+  fmt->paren_depth = 0;
+  fmt->bracket_depth = 0;
+  fmt->angle_depth = 0;
 }
 
 static void fmt_blank_line(CanonFormat *fmt) {
@@ -230,6 +234,19 @@ static void fmt_emit_token(CanonFormat *fmt, const ZCanonicalToken *token) {
   fmt->previous = token;
 }
 
+static void fmt_note_delimiter(CanonFormat *fmt, const ZCanonicalToken *token) {
+  if (fmt_is_symbol(token, "(")) fmt->paren_depth++;
+  else if (fmt_is_symbol(token, ")") && fmt->paren_depth > 0) fmt->paren_depth--;
+  else if (fmt_is_symbol(token, "[")) fmt->bracket_depth++;
+  else if (fmt_is_symbol(token, "]") && fmt->bracket_depth > 0) fmt->bracket_depth--;
+  else if (fmt_token_is_compact_angle(fmt, token) && fmt_is_symbol(token, "<")) fmt->angle_depth++;
+  else if (fmt_token_is_compact_angle(fmt, token) && fmt_is_symbol(token, ">") && fmt->angle_depth > 0) fmt->angle_depth--;
+}
+
+static bool fmt_at_list_item_separator(const CanonFormat *fmt) {
+  return fmt_current_brace(fmt, FMT_BRACE_LIST) && fmt->paren_depth == 0 && fmt->bracket_depth == 0 && fmt->angle_depth == 0;
+}
+
 bool z_canonical_text_format(const ZCanonicalTokenVec *tokens, ZBuf *out, ZDiag *diag) {
   if (!tokens || !out) return false;
   CanonFormat fmt = {.tokens = tokens, .out = out, .compact_angles = fmt_build_compact_angles(tokens), .line_start = true};
@@ -282,13 +299,14 @@ bool z_canonical_text_format(const ZCanonicalTokenVec *tokens, ZBuf *out, ZDiag 
       }
       continue;
     }
-    if (fmt_is_symbol(token, ",") && fmt_current_brace(&fmt, FMT_BRACE_LIST)) {
+    if (fmt_is_symbol(token, ",") && fmt_at_list_item_separator(&fmt)) {
       fmt_emit_token(&fmt, token);
       const ZCanonicalToken *next = fmt_next_significant(tokens, i);
       if (next && !fmt_is_symbol(next, "}")) fmt_newline(&fmt);
       continue;
     }
     fmt_emit_token(&fmt, token);
+    fmt_note_delimiter(&fmt, token);
   }
   fmt_newline(&fmt);
   free(fmt.compact_angles);

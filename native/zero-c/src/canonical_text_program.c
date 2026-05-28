@@ -917,12 +917,16 @@ static bool canon_parse_params_ast(CanonAstParser *parser, ParamVec *out) {
   return !canon_ast_has_diag(parser->diag);
 }
 
-static char *canon_parse_type_until_ast(CanonAstParser *parser, const char *stop_a, const char *stop_b) {
+static bool canon_ast_is_type_stop(const ZCanonicalToken *token, const char *stop_a, const char *stop_b, const char *stop_c) {
+  return canon_ast_is_text(token, stop_a) || canon_ast_is_text(token, stop_b) || canon_ast_is_text(token, stop_c);
+}
+
+static char *canon_parse_type_until_any_ast(CanonAstParser *parser, const char *stop_a, const char *stop_b, const char *stop_c) {
   size_t start = parser->pos;
   int angle = 0, bracket = 0, paren = 0;
   while (parser->pos < parser->tokens->len) {
     const ZCanonicalToken *token = canon_ast_peek(parser);
-    if (angle == 0 && bracket == 0 && paren == 0 && (canon_ast_is_text(token, stop_a) || canon_ast_is_text(token, stop_b))) break;
+    if (angle == 0 && bracket == 0 && paren == 0 && canon_ast_is_type_stop(token, stop_a, stop_b, stop_c)) break;
     if (token->kind == Z_CANON_TOKEN_EOF || token->kind == Z_CANON_TOKEN_NEWLINE || token->kind == Z_CANON_TOKEN_COMMENT) break;
     if (canon_ast_is_text(token, "<")) angle++;
     else if (canon_ast_is_text(token, ">") && angle > 0) angle--;
@@ -933,6 +937,10 @@ static char *canon_parse_type_until_ast(CanonAstParser *parser, const char *stop
     parser->pos++;
   }
   return canon_parse_type_between(parser, start, parser->pos);
+}
+
+static char *canon_parse_type_until_ast(CanonAstParser *parser, const char *stop_a, const char *stop_b) {
+  return canon_parse_type_until_any_ast(parser, stop_a, stop_b, NULL);
 }
 
 static bool canon_parse_raises_ast(CanonAstParser *parser, Function *fun) {
@@ -1173,12 +1181,57 @@ static void canon_parse_field_list_ast(CanonAstParser *parser, ParamVec *out, bo
   }
 }
 
+static void canon_parse_type_field_ast(CanonAstParser *parser, ParamVec *out) {
+  const ZCanonicalToken *name = canon_ast_expect_word(parser, "expected field or method name");
+  canon_ast_expect(parser, ":", "expected ':' after field name");
+  char *type = canon_parse_type_until_any_ast(parser, "=", ",", "}");
+  Expr *default_value = NULL;
+  if (canon_ast_accept(parser, "=")) {
+    size_t value_start = parser->pos;
+    size_t value_end = canon_ast_find_top_level_separator(parser->tokens, value_start, parser->tokens->len, ",");
+    if (value_end == CANON_AST_NO_INDEX) value_end = canon_ast_find_top_level(parser->tokens, value_start, parser->tokens->len, "}");
+    if (value_end == CANON_AST_NO_INDEX) value_end = canon_ast_line_end(parser->tokens, value_start);
+    default_value = canon_parse_expr_span(parser->tokens, value_start, value_end, parser->diag);
+    parser->pos = value_end;
+  }
+  if (name) {
+    canon_push_param_ast(out, (Param){
+      .name = z_strdup(name->text),
+      .type = type,
+      .default_value = default_value,
+      .line = name->line,
+      .column = name->column
+    });
+  } else {
+    free(type);
+    (void)default_value;
+  }
+  canon_ast_expect(parser, ",", "expected trailing comma in type field");
+}
+
+static void canon_parse_type_method_ast(CanonAstParser *parser, Shape *shape) {
+  bool is_public = canon_ast_accept(parser, "pub");
+  canon_ast_expect(parser, "fn", is_public ? "expected public type method" : "expected type method");
+  canon_push_function_ast(&shape->methods, canon_parse_signature_ast(parser, is_public, false, true));
+}
+
+static void canon_parse_type_body_ast(CanonAstParser *parser, Shape *shape) {
+  if (!canon_ast_expect(parser, "{", "expected type body")) return;
+  canon_ast_skip_newlines(parser);
+  while (!canon_ast_has_diag(parser->diag) && !canon_ast_accept(parser, "}")) {
+    const ZCanonicalToken *token = canon_ast_peek(parser);
+    if (canon_ast_is_text(token, "fn") || canon_ast_is_text(token, "pub")) canon_parse_type_method_ast(parser, shape);
+    else canon_parse_type_field_ast(parser, &shape->fields);
+    canon_ast_skip_newlines(parser);
+  }
+}
+
 static void canon_parse_type_decl_ast(CanonAstParser *parser, Program *program, bool is_public, const char *layout) {
   const ZCanonicalToken *name = canon_ast_expect_word(parser, "expected type name");
   Shape shape = {.layout = z_strdup(layout ? layout : "auto"), .is_public = is_public, .line = name ? name->line : 1, .column = name ? name->column : 1};
   if (name) shape.name = z_strdup(name->text);
   canon_parse_type_params_ast(parser, &shape.type_params);
-  if (canon_ast_is_text(canon_ast_peek(parser), "{")) canon_parse_field_list_ast(parser, &shape.fields, true);
+  if (canon_ast_is_text(canon_ast_peek(parser), "{")) canon_parse_type_body_ast(parser, &shape);
   canon_push_shape_ast(&program->shapes, shape);
 }
 

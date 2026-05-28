@@ -272,6 +272,32 @@ static void formats_public_lists_match_patterns_and_prefix_forms(void) {
   expect_formats_to(source, expected, "public lists, match patterns, and prefix forms");
 }
 
+static void formats_type_defaults_methods_and_generic_field_commas(void) {
+  const char *source =
+    "type Pair<T,U>{left:T,right:U,}\n"
+    "type Counter{value:i32=0,pair:Pair<i32,u8> = Pair{left:1,right:2_u8},\n"
+    "pub fn reset(self:mutref<Self>)->Void{self.value=0}\n"
+    "fn bump(self:mutref<Self>,amount:i32)->Void{self.value=self.value+amount}\n"
+    "}\n";
+  const char *expected =
+    "type Pair<T, U> {\n"
+    "    left: T,\n"
+    "    right: U,\n"
+    "}\n"
+    "\n"
+    "type Counter {\n"
+    "    value: i32 = 0,\n"
+    "    pair: Pair<i32, u8> = Pair { left: 1, right: 2_u8 },\n"
+    "    pub fn reset(self: mutref<Self>) -> Void {\n"
+    "        self.value = 0\n"
+    "    }\n"
+    "    fn bump(self: mutref<Self>, amount: i32) -> Void {\n"
+    "        self.value = self.value + amount\n"
+    "    }\n"
+    "}\n";
+  expect_formats_to(source, expected, "type defaults, methods, and generic field commas");
+}
+
 static void formats_else_and_line_start_prefix_forms(void) {
   const char *else_source =
     "fn choose(flag:Bool)->Void{if flag{return}\n"
@@ -902,6 +928,23 @@ static void parses_checks_and_graph_roundtrips_match_guards(void) {
   expect_program_checks_and_roundtrips(source, "canonical match guards", true);
 }
 
+static void parses_checks_and_graph_roundtrips_type_defaults_and_methods(void) {
+  const char *source =
+    "type Counter {\n"
+    "    value: i32 = 0,\n"
+    "    pub fn add(self: mutref<Self>, amount: i32) -> Void {\n"
+    "        self.value = self.value + amount\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "fn make_counter() -> i32 {\n"
+    "    var counter: Counter = Counter {}\n"
+    "    counter.add(3)\n"
+    "    return counter.value\n"
+    "}\n";
+  expect_program_checks_and_roundtrips(source, "canonical type defaults and methods", true);
+}
+
 static void rejects_noncanonical_spellings(void) {
   expect_format_rejects_without_diag("fn ok() -> Void {}\n123abc\n", "formatter rejects malformed trailing input without diag");
   expect_rejects("fun main() -> Void {}\n", "fun keyword");
@@ -1014,6 +1057,7 @@ int main(int argc, char **argv) {
   formats_angles_comparisons_and_ranges_canonically();
   formats_deep_nested_blocks();
   formats_public_lists_match_patterns_and_prefix_forms();
+  formats_type_defaults_methods_and_generic_field_commas();
   formats_else_and_line_start_prefix_forms();
   parses_fallibility_choices_and_interfaces();
   parses_nested_generic_type_commas();
@@ -1042,6 +1086,7 @@ int main(int argc, char **argv) {
   parses_checks_and_graph_roundtrips_generic_shape_literal();
   parses_checks_and_graph_roundtrips_rescue_operand();
   parses_checks_and_graph_roundtrips_match_guards();
+  parses_checks_and_graph_roundtrips_type_defaults_and_methods();
   rejects_noncanonical_spellings();
   for (int i = 1; i + 1 < argc; i += 2) parse_file_arg(argv[i], argv[i + 1]);
   printf("canonical text smoke ok\n");
