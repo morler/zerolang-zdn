@@ -223,7 +223,7 @@ static void cw_append_expr_prec(CanonWriter *writer, const Expr *expr, int paren
       cw_append_expr_prec(writer, expr->right, prec, true);
       break;
     case EXPR_CAST:
-      cw_append_expr_prec(writer, expr->left, prec, false);
+      cw_append_expr_prec(writer, expr->left, prec + 1, false);
       zbuf_append(writer->buf, " as ");
       zbuf_append(writer->buf, expr->text ? expr->text : "");
       break;

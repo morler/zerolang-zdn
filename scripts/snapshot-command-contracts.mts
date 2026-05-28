@@ -1223,6 +1223,12 @@ assert.equal(zero(["graph", "check", graphSourcePatchPath]).stdout, "program gra
 const graphUserDerefSourcePath = join(outDir, "deref-member.0");
 const graphUserDerefViewPath = join(outDir, "deref-member.view.0");
 const graphPrefixDerefSourcePath = join(outDir, "prefix-deref-member.0");
+const graphNestedCastSourcePath = join(outDir, "nested-cast.0");
+const graphNestedCastViewPath = join(outDir, "nested-cast.view.0");
+const graphPublicExportSourcePath = join(outDir, "public-export-c.0");
+const graphPublicExportViewPath = join(outDir, "public-export-c.view.0");
+const graphPublicInterfaceSourcePath = join(outDir, "public-interface-method.0");
+const graphPublicInterfaceViewPath = join(outDir, "public-interface-method.view.0");
 const graphPublicSumsSourcePath = join(outDir, "public-sums.0");
 const graphExternFieldsSourcePath = join(outDir, "extern-fields.0");
 const graphCommentsSourcePath = join(outDir, "comments.0");
@@ -1257,6 +1263,40 @@ assert.equal(zero(["check", graphPrefixDerefSourcePath]).stdout, "ok\n");
 const graphPrefixDerefView = zero(["graph", "view", graphPrefixDerefSourcePath]).stdout;
 assert.match(graphPrefixDerefView, /return \(\*wrapped\)\.x/);
 assert.equal(zero(["check", graphPrefixDerefSourcePath]).stdout, "ok\n");
+writeFileSync(graphNestedCastSourcePath, [
+  "pub fn main() -> u32 {",
+  "    let x: i32 = 1",
+  "    return (x as u16) as u32",
+  "}",
+  "",
+].join("\n"));
+assert.equal(zero(["check", graphNestedCastSourcePath]).stdout, "ok\n");
+const graphNestedCastView = zero(["graph", "view", graphNestedCastSourcePath]).stdout;
+assert.match(graphNestedCastView, /return \(x as u16\) as u32/);
+assert.equal(zero(["graph", "view", "--out", graphNestedCastViewPath, graphNestedCastSourcePath]).stdout, "");
+assert.equal(zero(["check", graphNestedCastViewPath]).stdout, "ok\n");
+assert.match(json(["graph", "roundtrip", "--json", graphNestedCastSourcePath]).body.view, /return \(x as u16\) as u32/);
+writeFileSync(graphPublicExportSourcePath, [
+  "pub export c fn main i32",
+  "  ret 1",
+  "",
+].join("\n"));
+assert.equal(zero(["check", graphPublicExportSourcePath]).stdout, "ok\n");
+assert.equal(zero(["graph", "view", "--out", graphPublicExportViewPath, graphPublicExportSourcePath]).stdout, "");
+assert.equal(zero(["check", graphPublicExportViewPath]).stdout, "ok\n");
+assert.match(json(["graph", "roundtrip", "--json", graphPublicExportSourcePath]).body.view, /pub export c fn main\(\) -> i32/);
+writeFileSync(graphPublicInterfaceSourcePath, [
+  "interface Reader",
+  "  pub fn read i32",
+  "",
+  "pub fn main i32",
+  "  ret 1",
+  "",
+].join("\n"));
+assert.equal(zero(["check", graphPublicInterfaceSourcePath]).stdout, "ok\n");
+assert.equal(zero(["graph", "view", "--out", graphPublicInterfaceViewPath, graphPublicInterfaceSourcePath]).stdout, "");
+assert.equal(zero(["check", graphPublicInterfaceViewPath]).stdout, "ok\n");
+assert.match(json(["graph", "roundtrip", "--json", graphPublicInterfaceSourcePath]).body.view, /pub fn read\(\) -> i32/);
 writeFileSync(graphPublicSumsSourcePath, [
   "pub enum Mode: u8 {",
   "    ready,",

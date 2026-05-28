@@ -1275,8 +1275,9 @@ static void canon_parse_interface_ast(CanonAstParser *parser, Program *program, 
   canon_ast_skip_newlines(parser);
   while (!canon_ast_has_diag(parser->diag) && !canon_ast_accept(parser, "}")) {
     const ZCanonicalToken *method_start = canon_ast_peek(parser);
+    bool method_public = canon_ast_accept(parser, "pub");
     canon_ast_expect(parser, "fn", "expected interface method");
-    canon_push_function_ast(&item.methods, canon_parse_signature_ast(parser, method_start, false, false, false));
+    canon_push_function_ast(&item.methods, canon_parse_signature_ast(parser, method_start, method_public, false, false));
     canon_ast_skip_newlines(parser);
   }
   canon_push_interface_ast(&program->interfaces, item);
@@ -1368,6 +1369,11 @@ static void canon_parse_test_decl_ast(CanonAstParser *parser, Program *program, 
 
 static void canon_parse_decl_after_pub_ast(CanonAstParser *parser, Program *program, const ZCanonicalToken *start, bool is_public) {
   if (canon_ast_accept(parser, "fn")) canon_push_function_ast(&program->functions, canon_parse_signature_ast(parser, start, is_public, false, true));
+  else if (canon_ast_accept(parser, "export")) {
+    canon_ast_expect(parser, "c", "expected public export c fn");
+    canon_ast_expect(parser, "fn", "expected public export c fn");
+    canon_push_function_ast(&program->functions, canon_parse_signature_ast(parser, start, is_public, true, true));
+  }
   else if (canon_ast_accept(parser, "type")) canon_parse_type_decl_ast(parser, program, start, is_public, NULL);
   else if (canon_ast_accept(parser, "packed")) { canon_ast_expect(parser, "type", "expected packed type declaration"); canon_parse_type_decl_ast(parser, program, start, is_public, "packed"); }
   else if (canon_ast_accept(parser, "extern")) {

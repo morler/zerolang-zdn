@@ -1268,6 +1268,7 @@ static bool canon_parse_interface(CanonParser *parser) {
   if (!canon_expect_symbol(parser, "{", "expected interface body")) return false;
   canon_skip_newlines(parser);
   while (!canon_is_symbol_text(canon_peek(parser), "}") && canon_peek(parser)->kind != Z_CANON_TOKEN_EOF) {
+    canon_accept_word(parser, "pub");
     if (!canon_accept_word(parser, "fn")) return canon_fail(parser->diag, canon_peek(parser), "expected interface method", "fn", canon_peek(parser)->text);
     if (!canon_parse_signature(parser, false, 1)) return false;
     if (!canon_expect_declaration_end(parser, "unexpected tokens after interface method")) return false;
@@ -1350,6 +1351,11 @@ static bool canon_parse_public_declaration(CanonParser *parser, const ZCanonical
     if (parser->facts) parser->facts->function_count++;
     return canon_parse_signature(parser, true, 1);
   }
+  if (canon_accept_word(parser, "export")) {
+    if (!canon_accept_word(parser, "c") || !canon_accept_word(parser, "fn")) return canon_fail(parser->diag, canon_peek(parser), "expected public export c fn", "pub export c fn", start->text);
+    if (parser->facts) parser->facts->function_count++;
+    return canon_parse_signature(parser, true, 1);
+  }
   if (canon_accept_word(parser, "type")) return canon_parse_type_declaration(parser, false);
   if (canon_accept_word(parser, "packed")) {
     if (!canon_accept_word(parser, "type")) return canon_fail(parser->diag, canon_peek(parser), "expected packed type declaration", "packed type", canon_peek(parser) ? canon_peek(parser)->text : "end of file");
@@ -1364,7 +1370,7 @@ static bool canon_parse_public_declaration(CanonParser *parser, const ZCanonical
   }
   if (canon_accept_word(parser, "alias")) return canon_parse_alias_declaration(parser);
   if (canon_accept_word(parser, "const")) return canon_parse_const_declaration(parser);
-  return canon_fail(parser->diag, canon_peek(parser), "expected public declaration", "fn, type, extern type, enum, choice, interface, alias, or const", canon_peek(parser) ? canon_peek(parser)->text : "end of file");
+  return canon_fail(parser->diag, canon_peek(parser), "expected public declaration", "fn, export c fn, type, extern type, enum, choice, interface, alias, or const", canon_peek(parser) ? canon_peek(parser)->text : "end of file");
 }
 
 static bool canon_parse_declaration_body(CanonParser *parser, const ZCanonicalToken *start) {

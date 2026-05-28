@@ -10648,7 +10648,14 @@ static int run_graph_roundtrip_command(const Command *command, SourceInput *inpu
     return 1;
   }
 
-  if (command->json && !command->out) z_program_graph_append_view(&view, &original, input && input->source_file ? input->source_file : command->input, diag);
+  if (command->json && !command->out && !z_program_graph_append_view(&view, &original, input && input->source_file ? input->source_file : command->input, diag)) {
+    if (command->json) print_diag_json(diag->path ? diag->path : command->input, diag);
+    else print_diag(diag->path ? diag->path : command->input, diag);
+    z_program_graph_free(&roundtrip);
+    z_program_graph_free(&original);
+    zbuf_free(&view);
+    return 1;
+  }
   if (command->out) {
     if (reject_graph_source_text_out(command, "zero graph roundtrip --out <program-graph-artifact> <input>", diag)) {
       z_program_graph_free(&roundtrip);
