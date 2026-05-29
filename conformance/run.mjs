@@ -3672,6 +3672,8 @@ for (const fixture of [
   "owned-aggregate-array-repeat.0",
   "owned-aggregate-root-use-after-move.0",
   "owned-aggregate-partial-root-use-after-move.0",
+  "maybe-owned-check-use-after-move.0",
+  "maybe-owned-rescue-fallback-use-after-move.0",
 ]) {
   const result = await execFileAsync(zero, ["check", `conformance/native/fail/${fixture}`]).catch((error) => error);
   assert.notEqual(result.code, 0);

@@ -7308,6 +7308,29 @@ static bool check_expr(CheckContext *ctx, const Program *program, const Expr *ex
 
 static void mark_owned_move_if_needed(const Program *program, const Expr *expr, Scope *scope, const char *destination_type) {
   if (!expr || !scope || !destination_type || !type_contains_owned(program, destination_type, 0)) return;
+  if (expr->kind == EXPR_CHECK) {
+    char root[128];
+    char path[256];
+    if (expr_binding_path(expr->left, root, sizeof(root), path, sizeof(path)) && scope_has(scope, root)) {
+      char *payload_path = origin_path_join(path, "value");
+      scope_add_moved_place(scope, root, payload_path);
+      free(payload_path);
+      ((Expr *)expr)->moves_ownership = true;
+    }
+    return;
+  }
+  if (expr->kind == EXPR_RESCUE) {
+    char root[128];
+    char path[256];
+    if (expr_binding_path(expr->left, root, sizeof(root), path, sizeof(path)) && scope_has(scope, root)) {
+      char *payload_path = origin_path_join(path, "value");
+      scope_add_moved_place(scope, root, payload_path);
+      free(payload_path);
+      ((Expr *)expr)->moves_ownership = true;
+    }
+    mark_owned_move_if_needed(program, expr->right, scope, destination_type);
+    return;
+  }
   char root[128];
   char path[256];
   if (!expr_binding_path(expr, root, sizeof(root), path, sizeof(path)) || !scope_has(scope, root)) return;
