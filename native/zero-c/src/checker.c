@@ -9653,6 +9653,122 @@ static bool check_match_guard(CheckContext *ctx, const Program *program, MatchAr
   return true;
 }
 
+static bool match_arm_is_fallback(const MatchArm *arm) {
+  return arm && arm->case_name && strcmp(arm->case_name, "_") == 0;
+}
+
+static bool scalar_match_arm_bounds(const MatchArm *arm, unsigned long long *start, unsigned long long *end) {
+  if (!arm || match_arm_is_fallback(arm)) return false;
+  unsigned long long parsed_start = 0;
+  unsigned long long parsed_end = 0;
+  if (!parse_match_int_literal(arm->case_name, &parsed_start)) return false;
+  parsed_end = parsed_start;
+  if (arm->range_end && !parse_match_int_literal(arm->range_end, &parsed_end)) return false;
+  if (start) *start = parsed_start;
+  if (end) *end = parsed_end;
+  return true;
+}
+
+static bool scalar_match_arms_may_share_value(const MatchArm *left, const MatchArm *right, bool is_bool) {
+  if (!left || !right) return false;
+  if (match_arm_is_fallback(left) || match_arm_is_fallback(right)) return true;
+  if (is_bool) return !left->range_end && !right->range_end && strcmp(left->case_name, right->case_name) == 0;
+  unsigned long long left_start = 0;
+  unsigned long long left_end = 0;
+  unsigned long long right_start = 0;
+  unsigned long long right_end = 0;
+  if (!scalar_match_arm_bounds(left, &left_start, &left_end) ||
+      !scalar_match_arm_bounds(right, &right_start, &right_end)) return true;
+  return left_start <= right_end && right_start <= left_end;
+}
+
+static bool variant_match_arms_may_share_value(const MatchArm *left, const MatchArm *right) {
+  if (!left || !right) return false;
+  if (match_arm_is_fallback(left) || match_arm_is_fallback(right)) return true;
+  return strcmp(left->case_name, right->case_name) == 0;
+}
+
+static bool match_guard_can_be_false(const MatchArm *arm) {
+  return !arm || !arm->guard || arm->guard->kind != EXPR_BOOL || !arm->guard->bool_value;
+}
+
+static void scope_add_bool_match_case_guards(CheckContext *ctx, const Program *program, const Expr *match_expr, const MatchArm *arm, Scope *source_scope, Scope *guard_scope) {
+  if (!arm || arm->range_end || match_arm_is_fallback(arm)) return;
+  if (strcmp(arm->case_name, "true") == 0) {
+    scope_add_maybe_guards_from_condition_true(ctx, program, match_expr, source_scope, guard_scope);
+  } else if (strcmp(arm->case_name, "false") == 0) {
+    scope_add_maybe_guards_from_condition_false(ctx, program, match_expr, source_scope, guard_scope);
+  }
+}
+
+static bool match_subject_maybe_guard_invalidated_by_guard(CheckContext *ctx, const Program *program, const Expr *match_expr, const Expr *guard, Scope *scope) {
+  if (!match_expr || !guard || !scope) return false;
+  char root[128];
+  char path[256];
+  if (!maybe_presence_guard_place(ctx, program, match_expr, scope, root, sizeof(root), path, sizeof(path))) return false;
+  Scope temp = {.parent = scope};
+  if (!scope_add_maybe_present(&temp, scope, root, path)) return false;
+  scope_clear_maybe_guards_for_expr_mutations(ctx, program, guard, scope, &temp);
+  Place fact = {
+    .root = root,
+    .root_scope = scope_binding_scope(scope, root),
+    .path = path[0] ? path : NULL,
+  };
+  bool still_present = place_vec_contains(&temp.maybe_present, &fact);
+  scope_free(&temp);
+  return !still_present;
+}
+
+static void seed_variant_match_payload_scope(CheckContext *ctx, const Program *program, const Expr *match_expr, Scope *match_scope, Scope *arm_scope, const MatchArm *arm, const Choice *item_choice) {
+  if (!arm || match_arm_is_fallback(arm) || !arm->payload_name || !item_choice) return;
+  const Param *item_case = find_case(&item_choice->cases, arm->case_name);
+  if (!item_case || !item_case->type) return;
+  scope_add(arm_scope, arm->payload_name, item_case->type, false);
+  register_match_payload_binding_provenance(ctx, program, match_expr, match_scope, arm_scope, arm->payload_name, arm->case_name);
+}
+
+static bool apply_match_guard_false_fallthrough(CheckContext *ctx, const Program *program, MatchArm *arm, Scope *match_scope, Scope *guard_scope, ZDiag *diag) {
+  if (!check_match_guard(ctx, program, arm, guard_scope, diag)) return false;
+  scope_clear_maybe_guards_for_expr_mutations(ctx, program, arm->guard, guard_scope, match_scope);
+  Scope fallthrough_facts = {.parent = match_scope};
+  scope_add_maybe_guards_from_condition_false(ctx, program, arm->guard, guard_scope, &fallthrough_facts);
+  scope_add_maybe_present_all(match_scope, &fallthrough_facts);
+  scope_free(&fallthrough_facts);
+  return true;
+}
+
+static bool apply_prior_scalar_match_guard_fallthroughs(CheckContext *ctx, const Program *program, const Stmt *stmt, size_t current_index, bool is_bool, Scope *scope, ZDiag *diag, bool *case_facts_valid) {
+  bool facts_valid = true;
+  MatchArm *current = &stmt->match_arms.items[current_index];
+  for (size_t previous_index = 0; previous_index < current_index; previous_index++) {
+    MatchArm *previous = &stmt->match_arms.items[previous_index];
+    if (!previous->guard || !match_guard_can_be_false(previous) || !scalar_match_arms_may_share_value(previous, current, is_bool)) continue;
+    bool invalidates_match_fact = is_bool && facts_valid && match_subject_maybe_guard_invalidated_by_guard(ctx, program, stmt->expr, previous->guard, scope);
+    Scope guard_scope = {.parent = scope};
+    if (is_bool && facts_valid) scope_add_bool_match_case_guards(ctx, program, stmt->expr, previous, scope, &guard_scope);
+    bool ok = apply_match_guard_false_fallthrough(ctx, program, previous, scope, &guard_scope, diag);
+    scope_free(&guard_scope);
+    if (!ok) return false;
+    if (invalidates_match_fact) facts_valid = false;
+  }
+  if (case_facts_valid) *case_facts_valid = facts_valid;
+  return true;
+}
+
+static bool apply_prior_variant_match_guard_fallthroughs(CheckContext *ctx, const Program *program, const Stmt *stmt, size_t current_index, Scope *scope, ZDiag *diag, const Choice *item_choice) {
+  MatchArm *current = &stmt->match_arms.items[current_index];
+  for (size_t previous_index = 0; previous_index < current_index; previous_index++) {
+    MatchArm *previous = &stmt->match_arms.items[previous_index];
+    if (!previous->guard || !match_guard_can_be_false(previous) || !variant_match_arms_may_share_value(previous, current)) continue;
+    Scope guard_scope = {.parent = scope};
+    seed_variant_match_payload_scope(ctx, program, stmt->expr, scope, &guard_scope, previous, item_choice);
+    bool ok = apply_match_guard_false_fallthrough(ctx, program, previous, scope, &guard_scope, diag);
+    scope_free(&guard_scope);
+    if (!ok) return false;
+  }
+  return true;
+}
+
 static bool check_scalar_match(CheckContext *ctx, const Program *program, const Function *fun, const Stmt *stmt, Scope *scope, ZDiag *diag, int loop_depth, const char *match_type) {
   diag = check_context_diag(ctx, diag);
   bool is_bool = is_bool_type(match_type);
@@ -9708,15 +9824,22 @@ static bool check_scalar_match(CheckContext *ctx, const Program *program, const 
   PlaceVec *arm_maybe_present = z_checked_calloc(stmt->match_arms.len, sizeof(PlaceVec));
   for (size_t arm_index = 0; arm_index < stmt->match_arms.len; arm_index++) {
     provenance_scope_snapshot_restore(before);
+    bool case_facts_valid = true;
+    if (!apply_prior_scalar_match_guard_fallthroughs(ctx, program, stmt, arm_index, is_bool, scope, diag, &case_facts_valid)) {
+      provenance_scope_snapshot_restore(before);
+      for (size_t i = 0; i < stmt->match_arms.len; i++) {
+        provenance_scope_snapshot_free(arm_states[i]);
+        place_vec_free(&arm_maybe_present[i]);
+      }
+      free(arm_states);
+      free(arm_continues);
+      free(arm_maybe_present);
+      provenance_scope_snapshot_free(before);
+      return false;
+    }
     Scope arm_scope = {.parent = scope};
     MatchArm *arm = &stmt->match_arms.items[arm_index];
-    if (is_bool && !arm->range_end) {
-      if (strcmp(arm->case_name, "true") == 0) {
-        scope_add_maybe_guards_from_condition_true(ctx, program, stmt->expr, scope, &arm_scope);
-      } else if (strcmp(arm->case_name, "false") == 0) {
-        scope_add_maybe_guards_from_condition_false(ctx, program, stmt->expr, scope, &arm_scope);
-      }
-    }
+    if (is_bool && case_facts_valid) scope_add_bool_match_case_guards(ctx, program, stmt->expr, arm, scope, &arm_scope);
     if (!check_match_guard(ctx, program, arm, &arm_scope, diag)) {
       scope_free(&arm_scope);
       provenance_scope_snapshot_restore(before);
@@ -10028,15 +10151,21 @@ static bool check_stmt(CheckContext *ctx, const Program *program, const Function
     PlaceVec *arm_maybe_present = z_checked_calloc(stmt->match_arms.len, sizeof(PlaceVec));
     for (size_t arm_index = 0; arm_index < stmt->match_arms.len; arm_index++) {
       provenance_scope_snapshot_restore(before);
+      if (!apply_prior_variant_match_guard_fallthroughs(ctx, program, stmt, arm_index, scope, diag, item_choice)) {
+        provenance_scope_snapshot_restore(before);
+        for (size_t i = 0; i < stmt->match_arms.len; i++) {
+          provenance_scope_snapshot_free(arm_states[i]);
+          place_vec_free(&arm_maybe_present[i]);
+        }
+        free(arm_states);
+        free(arm_continues);
+        free(arm_maybe_present);
+        provenance_scope_snapshot_free(before);
+        return false;
+      }
       Scope arm_scope = {.parent = scope};
       MatchArm *arm = &stmt->match_arms.items[arm_index];
-      if (strcmp(arm->case_name, "_") != 0 && arm->payload_name && item_choice) {
-        const Param *item_case = find_case(&item_choice->cases, arm->case_name);
-        if (item_case && item_case->type) {
-          scope_add(&arm_scope, arm->payload_name, item_case->type, false);
-          register_match_payload_binding_provenance(ctx, program, stmt->expr, scope, &arm_scope, arm->payload_name, arm->case_name);
-        }
-      }
+      seed_variant_match_payload_scope(ctx, program, stmt->expr, scope, &arm_scope, arm, item_choice);
       if (!check_match_guard(ctx, program, arm, &arm_scope, diag)) {
         scope_free(&arm_scope);
         provenance_scope_snapshot_restore(before);
