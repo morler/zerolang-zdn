@@ -28,14 +28,17 @@ bin/zero mem --json examples/allocator-collections.0
 - `profileSemantics`: canonical profile, `profileKey`, aliases, and optimization goal.
 - `profileCatalog`: the available profiles and aliases.
 - `profileBudget`: size limits and helper-budget policy for the selected profile.
+- `safetyFacts`: profile-sensitive bounds, overflow, initialization, aliasing, lifetime, ownership, span, MIR, and unchecked-surface policies.
 
 `zero size --json` adds `sizeBreakdown`, `retentionReasons`, and
-`optimizationHints`. Start there when an artifact is larger than expected.
+`optimizationHints`, plus the same `safetyFacts`. Start there when an artifact
+is larger than expected.
 
 `zero mem --json` is the memory-budget companion. It includes:
 
 - `memoryBudgets`: stack, static, heap, arena, and fixed-buffer totals.
 - `allocatorFacts`: which allocator APIs were used.
+- `safetyFacts`: the memory-safety policy contract attached to the selected profile.
 - `allocationInstrumentation`: allocation failure and cleanup facts.
 - `collectionFacts`: fixed-capacity collection usage and no-global-allocator checks.
 

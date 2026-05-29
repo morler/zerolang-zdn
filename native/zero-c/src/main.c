@@ -15,6 +15,7 @@
 #include "program_graph_roundtrip.h"
 #include "program_graph_size.h"
 #include "program_graph_view.h"
+#include "safety_contract.h"
 #include "std_sig.h"
 #include "std_source.h"
 
@@ -2154,6 +2155,7 @@ static void append_compile_time_json(ZBuf *buf, const Program *program, const So
 }
 
 static void append_program_graph_artifact_source_json(ZBuf *buf, const ZProgramGraphArtifactSource *source);
+static void append_safety_facts_json(ZBuf *buf, const char *profile);
 
 static void print_check_json_success(const char *path, SourceInput *input, const Program *program, const ZTargetInfo *target, const Command *command) {
   ZBuf buf;
@@ -2178,6 +2180,8 @@ static void print_check_json_success(const char *path, SourceInput *input, const
   append_compile_time_json(&buf, program, input, target);
   zbuf_append(&buf, ",\n  \"targetReadiness\": ");
   append_target_readiness_json(&buf, input, program, target, command);
+  zbuf_append(&buf, ",\n  \"safetyFacts\": ");
+  append_safety_facts_json(&buf, command && command->profile ? command->profile : "release");
   zbuf_append(&buf, ",\n  \"compilerPhases\": ");
   append_compiler_phases_json(&buf, input);
   zbuf_append(&buf, ",\n  \"compilerCaches\": ");
@@ -4625,6 +4629,18 @@ static const char *profile_symbol_policy(const char *profile) {
   return "keep-public-names";
 }
 
+static void append_safety_facts_json(ZBuf *buf, const char *profile) {
+  const char *canonical = profile_canonical_name(profile);
+  ZSafetyFactsProfile facts = {
+    .canonical_profile = canonical,
+    .profile_key = profile_key_name(profile),
+    .bounds_policy = profile_bounds_policy(profile),
+    .overflow_policy = profile_overflow_policy(profile),
+    .optimizer_elision = strcmp(canonical, "release-fast") == 0,
+  };
+  z_append_safety_facts_json(buf, &facts);
+}
+
 static int profile_max_hello_bytes(const char *profile) {
   const char *canonical = profile_canonical_name(profile);
   if (strcmp(canonical, "debug") == 0 || strcmp(canonical, "audit") == 0) return 65536;
@@ -5475,6 +5491,8 @@ static void append_direct_memory_json(ZBuf *buf, const SourceInput *input, const
   append_json_string(buf, z_host_target());
   zbuf_append(buf, ",\n  \"profile\": ");
   append_json_string(buf, command && command->profile ? command->profile : "release");
+  zbuf_append(buf, ",\n  \"safetyFacts\": ");
+  append_safety_facts_json(buf, command && command->profile ? command->profile : "release");
   zbuf_append(buf, ",\n  \"generatedCBytes\": 0,\n  \"cBridgeFallback\": false,\n  \"loweredIrBytes\": ");
   zbuf_appendf(buf, "%zu", input ? input->lowered_ir_bytes : 0);
   zbuf_append(buf, ",\n  \"directFacts\": {\"functionCount\":");
@@ -5607,6 +5625,8 @@ static void print_build_json(const Command *command, const SourceInput *input, c
   else append_incremental_invalidations_json(&extra, input, target, command->profile);
   zbuf_append(&extra, ",\n  \"profileSemantics\": ");
   append_profile_semantics_json(&extra, command->profile);
+  zbuf_append(&extra, ",\n  \"safetyFacts\": ");
+  append_safety_facts_json(&extra, command->profile);
   zbuf_append(&extra, ",\n  \"profileCatalog\": ");
   append_profile_catalog_json(&extra);
   zbuf_append(&extra, ",\n  \"profileBudget\": ");
@@ -8155,6 +8175,7 @@ static void append_size_report_back_json(ZBuf *buf, const Command *command, Sour
   zbuf_append(buf, ",\n  \"compilerCaches\": "); append_compiler_caches_json_ex(buf, input, target, profile, graph_hash && graph_hash[0] ? "program-graph" : NULL, graph_hash);
   zbuf_append(buf, ",\n  \"incrementalInvalidation\": "); append_incremental_invalidations_json_ex(buf, input, target, profile, graph_artifact, graph_hash, graph_lowering);
   zbuf_append(buf, ",\n  \"profileSemantics\": "); append_profile_semantics_json(buf, profile);
+  zbuf_append(buf, ",\n  \"safetyFacts\": "); append_safety_facts_json(buf, profile);
   zbuf_append(buf, ",\n  \"profileCatalog\": "); append_profile_catalog_json(buf);
   zbuf_append(buf, ",\n  \"objectBackend\": "); append_object_backend_json(buf, input, target, command, "size");
   zbuf_append(buf, "\n}\n");
@@ -9017,6 +9038,14 @@ static void append_use_imports_json(ZBuf *buf, const SourceInput *input, const P
   zbuf_append(buf, "]");
 }
 
+static void append_graph_readiness_json(ZBuf *buf, SourceInput *input, Program *program, const ZTargetInfo *target, const Command *command) {
+  zbuf_append(buf, "  \"targetReadiness\": ");
+  append_target_readiness_json(buf, input, program, target, command);
+  zbuf_append(buf, ",\n  \"safetyFacts\": ");
+  append_safety_facts_json(buf, command && command->profile ? command->profile : "release");
+  zbuf_append(buf, ",\n");
+}
+
 static void append_graph_json(ZBuf *buf, SourceInput *input, Program *program, const ZTargetInfo *target, const Command *command) {
   CapabilitySummary caps = program_capabilities(program);
   size_t public_count = 0;
@@ -9055,7 +9084,7 @@ static void append_graph_json(ZBuf *buf, SourceInput *input, Program *program, c
   zbuf_append(buf, ",\"httpRuntime\":");
   z_append_http_runtime_json(buf, target);
   zbuf_append(buf, "},\n");
-  zbuf_append(buf, "  \"targetReadiness\": "); append_target_readiness_json(buf, input, program, target, command); zbuf_append(buf, ",\n");
+  append_graph_readiness_json(buf, input, program, target, command);
   zbuf_append(buf, "  \"requiresCapabilities\": ");
   append_capability_json_array(buf, &caps);
   zbuf_append(buf, ",\n");
@@ -9723,6 +9752,8 @@ static void append_graph_check_json(
   bool include_readiness = source && program && ok;
   if (include_readiness) append_target_readiness_json(buf, source, program, target, command);
   else zbuf_append(buf, "null");
+  zbuf_append(buf, ",\n  \"safetyFacts\": ");
+  append_safety_facts_json(buf, command && command->profile ? command->profile : "release");
   zbuf_append(buf, ",\n  \"diagnostics\": [");
   if (!ok && diag) append_fix_plan_diagnostic(buf, diag->path ? diag->path : graph_check_diagnostic_path(command), diag);
   zbuf_append(buf, "],\n  \"saved\": ");

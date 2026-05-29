@@ -1328,10 +1328,17 @@ assert.equal(compileTimeBody.compileTime.staticValues.reflectionTables, false);
 assert.equal(compileTimeBody.compileTime.reflection.compileTimeOnly, true);
 assert.equal(compileTimeBody.compileTime.typedBuilders.status, "limited-v1");
 assert.equal(compileTimeBody.compileTime.typedBuilders.rawTokenStrings, false);
+assert.equal(compileTimeBody.safetyFacts.schemaVersion, 1);
+assert.equal(compileTimeBody.safetyFacts.bounds.runtimeTraps, true);
+assert.equal(compileTimeBody.safetyFacts.initialization.locals, "initializer-required");
+assert.equal(compileTimeBody.safetyFacts.aliasing.mutableAliases, "diagnostic");
+assert.equal(compileTimeBody.safetyFacts.mir.invalidMemoryContractsBlockEmission, true);
 
 const compileTimeGraph = await execFileAsync(zero, ["graph", "--json", "conformance/native/pass/compile-time-v1.0"]);
 const compileTimeGraphBody = JSON.parse(compileTimeGraph.stdout);
 assert.equal(compileTimeGraphBody.compileTime.deterministic, true);
+assert.equal(compileTimeGraphBody.safetyFacts.profileKey, "small");
+assert.equal(compileTimeGraphBody.safetyFacts.lifetimes.escapedLocalBorrow, "diagnostic");
 const readGateGraph = compileTimeGraphBody.functions.find((item) => item.name === "readGate");
 assert.ok(readGateGraph.staticParams.some((item) => item.name === "enabledFlag" && item.kind === "bool"));
 assert.ok(readGateGraph.staticParams.some((item) => item.name === "selectedMode" && item.kind === "enum"));
@@ -1350,6 +1357,10 @@ assert.equal(buildJsonM6Body.profileSemantics.runtimeMetadataPolicy, "minimum");
 assert.equal(buildJsonM6Body.profileSemantics.profileKey, "tiny");
 assert.equal(buildJsonM6Body.profileSemantics.unwindPolicy, "no-unwind-abort");
 assert.equal(buildJsonM6Body.profileSemantics.profileBudget.generatedCBytes, 0);
+assert.equal(buildJsonM6Body.safetyFacts.profile, "tiny");
+assert.equal(buildJsonM6Body.safetyFacts.bounds.policy, "checked-minimal-trap");
+assert.equal(buildJsonM6Body.safetyFacts.overflow.policy, "abort-on-trap");
+assert.equal(buildJsonM6Body.safetyFacts.ownership.useAfterMove, "diagnostic");
 assert.equal(buildJsonM6Body.profileBudget.helperBudgetPolicy, "pay-as-used-minimum-runtime");
 assert(buildJsonM6Body.profileCatalog.some((item) => item.canonical === "debug" && item.debugInfo === true));
 assert(buildJsonM6Body.profileCatalog.some((item) => item.canonical === "release-fast" && item.boundsPolicy.includes("optimizer")));
@@ -1371,6 +1382,8 @@ for (const [requestedProfile, canonicalProfile, profileKey] of [
   assert.equal(profileBody.profileSemantics.canonical, canonicalProfile);
   assert.equal(profileBody.profileSemantics.profileKey, profileKey);
   assert.equal(profileBody.profileSemantics.profileBudget.generatedCBytes, 0);
+  assert.equal(profileBody.safetyFacts.profile, canonicalProfile);
+  assert.equal(profileBody.safetyFacts.profileKey, profileKey);
   assert.equal(profileBody.profileBudget.cBridgeFallback, false);
 }
 
@@ -1378,6 +1391,8 @@ const profileSize = await execFileAsync(zero, ["size", "--json", "--profile", "d
 const profileSizeBody = JSON.parse(profileSize.stdout);
 assert.equal(profileSizeBody.generatedCBytes, 0);
 assert.equal(profileSizeBody.profileSemantics.profileKey, "debug");
+assert.equal(profileSizeBody.safetyFacts.profileKey, "debug");
+assert.equal(profileSizeBody.safetyFacts.uncheckedSurfaces[0].surface, "C imports");
 assert.equal(profileSizeBody.sizeBreakdown.profileKey, "debug");
 assert(profileSizeBody.sizeBreakdown.functions.some((item) => item.name === "main" && item.retainedBy === "entry point"));
 assert(profileSizeBody.sizeBreakdown.sections.some((item) => item.name === "text" && item.retainedBy.includes("retained functions")));
