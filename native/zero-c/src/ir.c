@@ -180,11 +180,14 @@ static IrTypeKind ir_type_kind(const char *type) {
   if (strcmp(type, "Maybe<MutSpan<u8>>") == 0 || strcmp(type, "Maybe<Span<u8>>") == 0 ||
       strcmp(type, "Maybe<String>") == 0 || strcmp(type, "Maybe<owned<ByteBuf>>") == 0) return IR_TYPE_MAYBE_BYTE_VIEW;
   if (strcmp(type, "Maybe<JsonDoc>") == 0 ||
+      strcmp(type, "Maybe<Bool>") == 0 ||
       strcmp(type, "Maybe<u8>") == 0 ||
       strcmp(type, "Maybe<u16>") == 0 ||
       strcmp(type, "Maybe<usize>") == 0 ||
       strcmp(type, "Maybe<i32>") == 0 ||
       strcmp(type, "Maybe<u32>") == 0 ||
+      strcmp(type, "Maybe<i64>") == 0 ||
+      strcmp(type, "Maybe<u64>") == 0 ||
       strcmp(type, "Maybe<owned<File>>") == 0) return IR_TYPE_MAYBE_SCALAR;
   return IR_TYPE_UNSUPPORTED;
 }
@@ -240,7 +243,7 @@ static IrTypeKind ir_maybe_scalar_element_type(const char *type) {
   char *inner = z_strndup(type + prefix_len, len - prefix_len - 1);
   IrTypeKind element = ir_type_kind(inner);
   free(inner);
-  return ir_type_is_value(element) ? element : IR_TYPE_UNSUPPORTED;
+  return (ir_type_is_value(element) || element == IR_TYPE_BOOL) ? element : IR_TYPE_UNSUPPORTED;
 }
 
 static unsigned ir_error_code_for_name(const char *name) {

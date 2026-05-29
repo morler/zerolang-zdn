@@ -6122,6 +6122,10 @@ static bool check_expr_expected(CheckContext *ctx, const Program *program, const
     if (is_float_literal_text(expr->text)) return validate_float_literal_for_type(expr, expected, diag);
     return validate_integer_literal_for_type(expr, expected, diag);
   }
+  if (expr->kind == EXPR_BOOL) {
+    set_expr_resolved_type(expr, "Bool");
+    return true;
+  }
   if (expr->kind == EXPR_NULL) {
     if (expected && type_is_named_generic(expected, "Maybe")) {
       set_expr_resolved_type(expr, expected);
