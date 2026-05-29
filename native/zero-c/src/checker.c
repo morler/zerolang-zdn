@@ -1386,14 +1386,14 @@ static bool expr_root_ident(const Expr *expr, char *out, size_t out_len) {
   }
 }
 
+static bool parse_static_uint_text(const char *text, unsigned long long *out);
+
 static bool expr_static_index_segment(const Expr *expr, char *out, size_t out_len) {
   if (!expr || expr->kind != EXPR_NUMBER || !expr->text || !out || out_len < 4) return false;
-  size_t len = strlen(expr->text);
-  if (len == 0 || len + 3 > out_len) return false;
-  for (size_t i = 0; i < len; i++) {
-    if (expr->text[i] < '0' || expr->text[i] > '9') return false;
-  }
-  snprintf(out, out_len, "[%s]", expr->text);
+  unsigned long long value = 0;
+  if (!parse_static_uint_text(expr->text, &value)) return false;
+  int written = snprintf(out, out_len, "[%llu]", value);
+  if (written < 0 || (size_t)written >= out_len) return false;
   return true;
 }
 
@@ -9960,6 +9960,7 @@ static bool check_stmt(CheckContext *ctx, const Program *program, const Function
     ProvenanceScopeSnapshot *before = provenance_scope_snapshot_capture(scope);
     ProvenanceScopeSnapshot **arm_states = z_checked_calloc(stmt->match_arms.len, sizeof(ProvenanceScopeSnapshot *));
     bool *arm_continues = z_checked_calloc(stmt->match_arms.len, sizeof(bool));
+    PlaceVec *arm_maybe_present = z_checked_calloc(stmt->match_arms.len, sizeof(PlaceVec));
     for (size_t arm_index = 0; arm_index < stmt->match_arms.len; arm_index++) {
       provenance_scope_snapshot_restore(before);
       Scope arm_scope = {.parent = scope};
@@ -9974,12 +9975,17 @@ static bool check_stmt(CheckContext *ctx, const Program *program, const Function
       scope_clear_maybe_guards_for_expr_mutations(ctx, program, arm->guard, &arm_scope, &arm_scope);
       scope_add_maybe_guards_from_condition_true(ctx, program, arm->guard, &arm_scope, &arm_scope);
       bool ok = check_stmt_vec_with_loop(ctx, program, fun, &arm->body, &arm_scope, diag, loop_depth);
+      place_vec_add_all(&arm_maybe_present[arm_index], &arm_scope.maybe_present);
       scope_free(&arm_scope);
       if (!ok) {
         provenance_scope_snapshot_restore(before);
-        for (size_t i = 0; i < stmt->match_arms.len; i++) provenance_scope_snapshot_free(arm_states[i]);
+        for (size_t i = 0; i < stmt->match_arms.len; i++) {
+          provenance_scope_snapshot_free(arm_states[i]);
+          place_vec_free(&arm_maybe_present[i]);
+        }
         free(arm_states);
         free(arm_continues);
+        free(arm_maybe_present);
         provenance_scope_snapshot_free(before);
         return false;
       }
@@ -9987,9 +9993,25 @@ static bool check_stmt(CheckContext *ctx, const Program *program, const Function
       arm_continues[arm_index] = !stmt_vec_guarantees_exit(&arm->body, fun->raises);
     }
     provenance_scope_snapshot_restore_union(before, arm_states, arm_continues, stmt->match_arms.len);
-    for (size_t i = 0; i < stmt->match_arms.len; i++) provenance_scope_snapshot_free(arm_states[i]);
+    size_t continuing_arm = stmt->match_arms.len;
+    size_t continuing_count = 0;
+    for (size_t i = 0; i < stmt->match_arms.len; i++) {
+      if (arm_continues[i]) {
+        continuing_arm = i;
+        continuing_count++;
+      }
+    }
+    if (continuing_count == 1) {
+      Scope guard_source = {.parent = scope, .maybe_present = arm_maybe_present[continuing_arm]};
+      scope_add_maybe_present_all(scope, &guard_source);
+    }
+    for (size_t i = 0; i < stmt->match_arms.len; i++) {
+      provenance_scope_snapshot_free(arm_states[i]);
+      place_vec_free(&arm_maybe_present[i]);
+    }
     free(arm_states);
     free(arm_continues);
+    free(arm_maybe_present);
     provenance_scope_snapshot_free(before);
     return true;
   }
