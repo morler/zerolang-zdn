@@ -7001,7 +7001,11 @@ static bool check_expr_expected(CheckContext *ctx, const Program *program, const
       if (logical) {
         ProvenanceScopeSnapshot *before_right = provenance_scope_snapshot_capture(scope);
         Scope right_scope = {.parent = scope};
-        if (strcmp(expr->text, "&&") == 0) scope_add_maybe_guards_from_condition_true(ctx, program, expr->left, scope, &right_scope);
+        if (strcmp(expr->text, "&&") == 0) {
+          scope_add_maybe_guards_from_condition_true(ctx, program, expr->left, scope, &right_scope);
+        } else if (strcmp(expr->text, "||") == 0) {
+          scope_add_maybe_guards_from_condition_false(ctx, program, expr->left, scope, &right_scope);
+        }
         if (!check_expr_expected(ctx, program, expr->right, &right_scope, diag, "Bool")) {
           provenance_scope_snapshot_restore(before_right);
           provenance_scope_snapshot_free(before_right);
@@ -9546,7 +9550,6 @@ static bool check_scalar_match(CheckContext *ctx, const Program *program, const 
         }
       }
     }
-    if (!check_match_guard(ctx, program, arm, scope, diag)) return false;
   }
   if (!has_fallback) {
     if (is_bool) {
@@ -9562,6 +9565,7 @@ static bool check_scalar_match(CheckContext *ctx, const Program *program, const 
   ProvenanceScopeSnapshot *before = provenance_scope_snapshot_capture(scope);
   ProvenanceScopeSnapshot **arm_states = z_checked_calloc(stmt->match_arms.len, sizeof(ProvenanceScopeSnapshot *));
   bool *arm_continues = z_checked_calloc(stmt->match_arms.len, sizeof(bool));
+  PlaceVec *arm_maybe_present = z_checked_calloc(stmt->match_arms.len, sizeof(PlaceVec));
   for (size_t arm_index = 0; arm_index < stmt->match_arms.len; arm_index++) {
     provenance_scope_snapshot_restore(before);
     Scope arm_scope = {.parent = scope};
@@ -9573,15 +9577,33 @@ static bool check_scalar_match(CheckContext *ctx, const Program *program, const 
         scope_add_maybe_guards_from_condition_false(ctx, program, stmt->expr, scope, &arm_scope);
       }
     }
+    if (!check_match_guard(ctx, program, arm, &arm_scope, diag)) {
+      scope_free(&arm_scope);
+      provenance_scope_snapshot_restore(before);
+      for (size_t i = 0; i < stmt->match_arms.len; i++) {
+        provenance_scope_snapshot_free(arm_states[i]);
+        place_vec_free(&arm_maybe_present[i]);
+      }
+      free(arm_states);
+      free(arm_continues);
+      free(arm_maybe_present);
+      provenance_scope_snapshot_free(before);
+      return false;
+    }
     scope_clear_maybe_guards_for_expr_mutations(ctx, program, arm->guard, &arm_scope, &arm_scope);
     scope_add_maybe_guards_from_condition_true(ctx, program, arm->guard, &arm_scope, &arm_scope);
     bool ok = check_stmt_vec_with_loop(ctx, program, fun, &arm->body, &arm_scope, diag, loop_depth);
+    place_vec_add_all(&arm_maybe_present[arm_index], &arm_scope.maybe_present);
     scope_free(&arm_scope);
     if (!ok) {
       provenance_scope_snapshot_restore(before);
-      for (size_t i = 0; i < stmt->match_arms.len; i++) provenance_scope_snapshot_free(arm_states[i]);
+      for (size_t i = 0; i < stmt->match_arms.len; i++) {
+        provenance_scope_snapshot_free(arm_states[i]);
+        place_vec_free(&arm_maybe_present[i]);
+      }
       free(arm_states);
       free(arm_continues);
+      free(arm_maybe_present);
       provenance_scope_snapshot_free(before);
       return false;
     }
@@ -9589,9 +9611,25 @@ static bool check_scalar_match(CheckContext *ctx, const Program *program, const 
     arm_continues[arm_index] = !stmt_vec_guarantees_exit(&arm->body, fun->raises);
   }
   provenance_scope_snapshot_restore_union(before, arm_states, arm_continues, stmt->match_arms.len);
-  for (size_t i = 0; i < stmt->match_arms.len; i++) provenance_scope_snapshot_free(arm_states[i]);
+  size_t continuing_arm = stmt->match_arms.len;
+  size_t continuing_count = 0;
+  for (size_t i = 0; i < stmt->match_arms.len; i++) {
+    if (arm_continues[i]) {
+      continuing_arm = i;
+      continuing_count++;
+    }
+  }
+  if (continuing_count == 1) {
+    Scope guard_source = {.parent = scope, .maybe_present = arm_maybe_present[continuing_arm]};
+    scope_add_maybe_present_all(scope, &guard_source);
+  }
+  for (size_t i = 0; i < stmt->match_arms.len; i++) {
+    provenance_scope_snapshot_free(arm_states[i]);
+    place_vec_free(&arm_maybe_present[i]);
+  }
   free(arm_states);
   free(arm_continues);
+  free(arm_maybe_present);
   provenance_scope_snapshot_free(before);
   return true;
 }
