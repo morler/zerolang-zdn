@@ -13,3 +13,5 @@ REASONIX.md
 # environment variables
 .env*
 !.env.example
+.reasonix
+.codegraph
